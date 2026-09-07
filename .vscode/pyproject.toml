@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-app"
+version = "0.1.0"
+description = "A lightweight local agent application"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "OpenAI" }]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["agent_app"]
