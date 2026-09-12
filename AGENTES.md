@@ -20,6 +20,14 @@ Não repetir nesses arquivos as listas completas de requisitos ou entidades. Atu
 - Não introduzir tecnologia alternativa ou dependência externa sem justificativa registrada e avaliação de impacto.
 - Manter a separação conceitual entre filme e exemplar físico.
 
+## Frontend
+
+O frontend do projeto deve ser implementado exclusivamente com Reflex.
+
+Utilizar os mecanismos próprios do Reflex para componentes, estado, eventos, páginas e interação.
+
+Não introduzir outra tecnologia de frontend para substituir ou complementar o Reflex, salvo quando houver uma alteração arquitetural explicitamente aprovada.
+
 ## 3. Controlar o escopo das mudanças
 
 - Implementar somente o que estiver definido na solicitação ou especificação atual.

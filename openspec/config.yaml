@@ -2,33 +2,59 @@ schema: spec-driven
 githubCopilot:
   cloudAgent: false
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: Sistema de Gestão para Locadora de Filmes.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Domain: Gestão de clientes, filmes, exemplares físicos,
+  disponibilidade, locações, devoluções, multas, pagamentos,
+  usuários internos e relatórios.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  Tech stack:
+    Backend, dados e APIs: Xano.
+    Funções, APIs e automações mantidas no repositório: XanoScript.
+
+  Frontend:
+    Reflex é a tecnologia obrigatória para implementação das interfaces frontend do projeto.
+    Não introduzir outra tecnologia de frontend sem uma mudança explícita da decisão arquitetural.
+
+  Architecture:
+    Manter separados o conceito de filme e o exemplar físico.
+    A disponibilidade deve ser controlada no nível do exemplar.
+    O backend é responsável pelas regras de negócio, persistência,
+    autenticação e autorização; o frontend não é mecanismo de segurança.
+
+  Security:
+    Aplicar autorização no backend e o princípio do menor privilégio.
+    Proteger dados pessoais e financeiros.
+    Preservar a rastreabilidade de locações, devoluções, multas,
+    pagamentos e alterações administrativas.
+
+  Development:
+    Desenvolver incrementalmente utilizando OpenSpec.
+    Preservar histórico e integridade dos dados.
+    Não modificar funcionalidades não relacionadas sem justificativa.
+
+  Language:
+    Escrever a documentação do projeto e os artefatos OpenSpec
+    em português brasileiro.
+
+rules:
+  proposal:
+    - Descrever claramente o problema, objetivo e escopo da mudança.
+    - Identificar impactos no domínio, na segurança e o que está fora do escopo quando necessário.
+
+  specs:
+    - Escrever requisitos verificáveis e cenários para comportamentos relevantes.
+    - Respeitar o modelo de domínio e explicitar regras de negócio, permissões e invariantes afetados.
+
+  tasks:
+    - Dividir a implementação em tarefas pequenas e verificáveis.
+
+operations:
+  apply:
+    guidance:
+      - Executar verificações relevantes e conferir permissões e integridade dos dados antes de concluir.
+
+  archive:
+    guidance:
+      - Confirmar que a implementação corresponde à especificação e que a documentação permanece consistente.
