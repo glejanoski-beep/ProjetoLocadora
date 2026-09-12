@@ -92,9 +92,11 @@ Até o momento, a base técnica definida no repositório é:
 
 - **Xano** como plataforma de backend, dados e APIs.
 - **XanoScript** para funções, APIs e automações mantidas no repositório.
+- **Frontend: Reflex**.
+- Reflex será utilizado como tecnologia exclusiva para implementação do frontend da aplicação.
 - Autenticação de usuários, controle de papéis e registro de eventos como fundamentos de segurança e rastreabilidade já representados na estrutura do projeto.
 
-A tecnologia do frontend, a estratégia de hospedagem e eventuais integrações externas ainda não estão definidas neste overview. Essas decisões devem ser documentadas quando forem confirmadas.
+A estratégia de hospedagem e eventuais integrações externas ainda não estão definidas neste overview. Essas decisões devem ser documentadas quando forem confirmadas.
 
 ## 9. Princípios de desenvolvimento
 
