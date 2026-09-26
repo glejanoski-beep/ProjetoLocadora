@@ -1,8 +1,10 @@
+# Recuperação de Senha Segura
+
 ## Purpose
 
 Define a recuperação de senha por magic link com respostas que protegem a privacidade e tokens de uso único integrados à interface Reflex.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Resposta de recuperação não revela cadastro
 

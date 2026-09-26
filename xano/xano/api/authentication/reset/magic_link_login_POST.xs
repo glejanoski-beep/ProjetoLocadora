@@ -18,45 +18,62 @@ query "reset/magic-link-login" verb=POST {
       error = "email is required but not provided"
     }
   
-    // Get the user record with the email from the URL
-    db.get user {
-      field_name = "email"
-      field_value = $input.email
-      output = [
-        "id"
-        "created_at"
-        "name"
-        "email"
-        "role"
-        "password_reset.token"
-        "password_reset.expiration"
-        "password_reset.used"
-      ]
-    } as $user
-  
-    // Validate the UUID matches the hashed value
-    security.check_password {
-      text_password = $input.magic_token
-      hash_password = $user.password_reset.token
-    } as $verify_token
-  
-    // Verify the UUID validation is true
-    precondition ($verify_token) {
-      error_type = "unauthorized"
-      error = "The token did not match"
+    db.transaction {
+      stack {
+        db.get user {
+          field_name = "email"
+          field_value = $input.email
+          output = [
+            "id"
+            "created_at"
+            "name"
+            "email"
+            "role"
+            "password_reset.token"
+            "password_reset.expiration"
+            "password_reset.used"
+          ]
+        } as $user
+
+        precondition ($user != null) {
+          error_type = "unauthorized"
+          error = "The token is invalid or expired."
+        }
+
+        security.check_password {
+          text_password = $input.magic_token
+          hash_password = $user.password_reset.token
+        } as $verify_token
+
+        precondition ($verify_token) {
+          error_type = "unauthorized"
+          error = "The token is invalid or expired."
+        }
+
+        precondition ($user.password_reset.expiration > now) {
+          error_type = "unauthorized"
+          error = "The token is invalid or expired."
+        }
+
+        precondition ($user.password_reset.used == false) {
+          error_type = "unauthorized"
+          error = "The token is invalid or expired."
+        }
+
+        db.edit user {
+          field_name = "id"
+          field_value = $user.id
+          data = {
+            password_reset: {
+              token     : $user.password_reset.token
+              expiration: $user.password_reset.expiration
+              used      : true
+            }
+          }
+        } as $user1
+      }
     }
-  
-    // Check that the password reset token has not expired
-    precondition ($user.password_reset.expiration > now) {
-      error = "Magic token has expired. Please request another one."
-    }
-  
-    // Check to make sure the password reset has not been used
-    precondition ($user.password_reset.used == false) {
-      error = "This magic link has already been used. Please request another one."
-    }
-  
-    // Create an authentication token
+
     security.create_auth_token {
       table = "user"
       extras = ""
@@ -64,25 +81,12 @@ query "reset/magic-link-login" verb=POST {
       id = $user.id
     } as $auth_token
   
-    // Update the user record that the password reset token has been used
-    db.edit user {
-      field_name = "id"
-      field_value = $user.id
-      data = {
-        password_reset: {
-        token     : $user.password_reset.token
-        expiration: $user.password_reset.expiration
-        used      : true
-      }
-      }
-    } as $user1
-  
     // Create an event log for password reset login
     function.run "Quick Start/log_event" {
       input = {
         user_id : $user.id
         action  : "login_for_password_reset"
-        metadata: $user1
+        metadata: {}
       }
     } as $event_log
   }

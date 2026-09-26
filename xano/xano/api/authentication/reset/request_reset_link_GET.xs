@@ -7,32 +7,24 @@ query "reset/request-reset-link" verb=GET {
   }
 
   stack {
-    // Generate a one-time magic link
     function.run "Quick Start/generate_magic_link" {
       input = {email: $input.email}
     } as $token_and_email
-  
-    // Check that the link exists
-    precondition ($token_and_email != null) {
-      error = "Magic link could not be created. Try again."
-    }
-  
-    // Create a variable with the API base URL
-    var $api_base_url {
-      value = $env.$api_baseurl
-    }
-  
-    // Create magic link
-    var $magic_link {
-      value = $api_base_url
-        |concat:"1_start_here_demo_page#/update-password":"/"
-        |concat:$token_and_email.token:"?magic_token="
-        |concat:$token_and_email.email:""
-    }
-  
-    // Create HTML message to include magic reset password link
-    util.template_engine {
-      value = """
+
+    conditional {
+      if ($token_and_email.token != null) {
+        var $api_base_url {
+          value = $env.$api_baseurl
+        }
+
+        var $magic_link {
+          value = $api_base_url
+            |concat:"redefinir-senha?magic_token=":$token_and_email.token
+            |concat:"&email=":$token_and_email.email
+        }
+
+        util.template_engine {
+          value = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -56,14 +48,15 @@ query "reset/request-reset-link" verb=GET {
         </body>
         </html>
         """
-    } as $message
-  
-    // Send email with password reset link
-    util.send_email {
-      service_provider = "xano"
-      subject = "Your password reset request"
-      message = $message
-    } as $send_email
+        } as $message
+
+        util.send_email {
+          service_provider = "xano"
+          subject = "Your password reset request"
+          message = $message
+        } as $send_email
+      }
+    }
   }
 
   response = {

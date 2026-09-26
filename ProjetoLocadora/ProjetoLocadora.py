@@ -32,5 +32,20 @@ def index() -> rx.Component:
     )
 
 
+@rx.page(route="/redefinir-senha")
+def reset_password_page() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.heading("Redefinição de senha", size="8"),
+            rx.text(
+                "Use o link recebido por e-mail para continuar a redefinição da sua senha."
+            ),
+            spacing="4",
+            justify="center",
+            min_height="85vh",
+        )
+    )
+
+
 app = rx.App()
 app.add_page(index)

@@ -5,7 +5,6 @@ function "Quick Start/generate_magic_link" {
   }
 
   stack {
-    // Checks that the email input is not empty
     precondition ($input.email != null) {
       error = "email is required but was not suppiled. "
     }
@@ -16,34 +15,45 @@ function "Quick Start/generate_magic_link" {
       return = {type: "single"}
     } as $user
   
-    // Verifies that the user record exists
-    precondition ($user != null) {
-      error_type = "notfound"
-      error = "No user found for that email."
+    var $token {
+      value = null
     }
-  
-    // Creates a unique UUID as token
-    security.create_uuid as $token
-  
-    // Builds the password reset object
-    var $password_reset {
-      value = {}
-        |set:"token":$token
-        |set:"expiration":(now
-          |add_secs_to_timestamp:(3600|to_int)
-        )
-        |set:"used":false
+
+    var $user_email {
+      value = null
     }
-  
-    // Updates the user record with the password reset object
-    db.edit user {
-      field_name = "id"
-      field_value = $user|get:"id":0
-      data = {password_reset: $password_reset}
-    } as $updated_password_reset
+
+    conditional {
+      if ($user != null) {
+        security.create_uuid as $new_token
+
+        var $password_reset {
+          value = {}
+            |set:"token":$new_token
+            |set:"expiration":(now
+              |add_secs_to_timestamp:(3600|to_int)
+            )
+            |set:"used":false
+        }
+
+        db.edit user {
+          field_name = "id"
+          field_value = $user|get:"id":0
+          data = {password_reset: $password_reset}
+        } as $updated_password_reset
+
+        var.update $token {
+          value = $new_token
+        }
+
+        var.update $user_email {
+          value = $user|get:"email":""
+        }
+      }
+    }
   }
 
-  response = {token: $token, email: $updated_password_reset.email}
+  response = {token: $token, email: $user_email}
   tags = ["xano:quick-start"]
   guid = "7LLWlSh92T5fSs1g4hl47yfefBQ"
 }
