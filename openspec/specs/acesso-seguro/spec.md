@@ -1,8 +1,10 @@
+# Acesso Seguro
+
 ## Purpose
 
 Define autenticação, autorização por papel e estado de acesso para proteger operações internas e administrativas da locadora no backend.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Operações protegidas exigem autenticação
 

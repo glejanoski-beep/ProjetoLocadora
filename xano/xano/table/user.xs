@@ -13,6 +13,8 @@ table user {
     enum role? {
       values = ["admin", "member"]
     }
+
+    bool is_active?=true
   
     object password_reset? {
       schema {

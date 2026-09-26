@@ -29,6 +29,7 @@ query "reset/magic-link-login" verb=POST {
             "name"
             "email"
             "role"
+            "is_active"
             "password_reset.token"
             "password_reset.expiration"
             "password_reset.used"
@@ -36,6 +37,11 @@ query "reset/magic-link-login" verb=POST {
         } as $user
 
         precondition ($user != null) {
+          error_type = "unauthorized"
+          error = "The token is invalid or expired."
+        }
+
+        precondition ($user.is_active != false) {
           error_type = "unauthorized"
           error = "The token is invalid or expired."
         }

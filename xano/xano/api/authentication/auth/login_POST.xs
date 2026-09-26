@@ -12,7 +12,7 @@ query "auth/login" verb=POST {
     db.get user {
       field_name = "email"
       field_value = $input.email
-      output = ["id", "created_at", "name", "email", "password", "role"]
+      output = ["id", "created_at", "name", "email", "password", "role", "is_active"]
     } as $user
 
     conditional {
@@ -29,6 +29,23 @@ query "auth/login" verb=POST {
   
     // Check to make sure a user with that email exists
     precondition ($user != null) {
+      error_type = "accessdenied"
+      error = "Invalid Credentials."
+    }
+
+    conditional {
+      if ($user.is_active == false) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
+
+    precondition ($user.is_active != false) {
       error_type = "accessdenied"
       error = "Invalid Credentials."
     }
