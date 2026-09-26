@@ -40,9 +40,11 @@ query "message/send_welcome_email" verb=POST {
     // Log welcome email sent for user
     function.run "Quick Start/log_event" {
       input = {
-        user_id : $input.user_id
-        action  : "welcome_email_sent"
-        metadata: {}
+        user_id     : null
+        action      : "welcome_email_sent"
+        result      : "success"
+        resource_type: "user"
+        resource_id : $input.user_id
       }
     } as $event_log
   }

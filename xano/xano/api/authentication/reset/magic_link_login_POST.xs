@@ -84,9 +84,9 @@ query "reset/magic-link-login" verb=POST {
     // Create an event log for password reset login
     function.run "Quick Start/log_event" {
       input = {
-        user_id : $user.id
-        action  : "login_for_password_reset"
-        metadata: {}
+        user_id: $user.id
+        action : "login_for_password_reset"
+        result : "success"
       }
     } as $event_log
   }

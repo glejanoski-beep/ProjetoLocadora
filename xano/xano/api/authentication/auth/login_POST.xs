@@ -14,6 +14,18 @@ query "auth/login" verb=POST {
       field_value = $input.email
       output = ["id", "created_at", "name", "email", "password", "role"]
     } as $user
+
+    conditional {
+      if ($user == null) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
   
     // Check to make sure a user with that email exists
     precondition ($user != null) {
@@ -26,6 +38,18 @@ query "auth/login" verb=POST {
       text_password = $input.password
       hash_password = $user.password
     } as $pass_result
+
+    conditional {
+      if ($pass_result == false) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
   
     // Verify that the password check passed
     precondition ($pass_result) {
@@ -43,7 +67,7 @@ query "auth/login" verb=POST {
   
     // Create an event log for login
     function.run "Quick Start/log_event" {
-      input = {user_id: $user.id, action: "login", metadata: $user}
+      input = {user_id: $user.id, action: "login", result: "success"}
     } as $event_log
   }
 

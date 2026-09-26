@@ -13,7 +13,7 @@ Tornar a auditoria segura e reutilizável antes da implementação de clientes, 
 - Definir metadados mínimos permitidos nos eventos.
 - Remover segredos e objetos completos de usuário dos chamadores de auditoria.
 - Registrar ação, usuário, recurso quando aplicável e resultado.
-- Auditar sucessos e falhas relevantes sem dados sensíveis.
+- Auditar sucessos e falhas relevantes sem dados sensíveis, inclusive falhas anônimas com `user_id` nulo e metadados mínimos.
 
 ## Fora do escopo
 
@@ -23,4 +23,4 @@ Tornar a auditoria segura e reutilizável antes da implementação de clientes, 
 
 ## Resultado esperado
 
-Nenhum log de autenticação ou administração contém senha, hash, token, dados de recuperação ou objeto completo de usuário.
+Nenhum log de autenticação ou administração contém senha, hash, token, dados de recuperação, identificadores submetidos em tentativas anônimas ou objeto completo de usuário.

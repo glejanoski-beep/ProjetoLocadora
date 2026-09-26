@@ -4,7 +4,7 @@
 
 ### Requisito 1: Autenticação de endpoints
 
-Endpoints que consultam ou alteram dados de usuários DEVEM exigir autenticação válida.
+Endpoints que consultam ou alteram dados de usuários SHALL exigir autenticação válida.
 
 #### Cenário: Chamada não autenticada
 
@@ -15,7 +15,7 @@ Endpoints que consultam ou alteram dados de usuários DEVEM exigir autenticaçã
 
 ### Requisito 2: Autorização por papel
 
-Operações administrativas DEVEM verificar no backend o papel exigido antes da execução.
+Operações administrativas SHALL verificar no backend o papel exigido antes da execução.
 
 #### Cenário: Papel insuficiente
 
@@ -26,7 +26,7 @@ Operações administrativas DEVEM verificar no backend o papel exigido antes da 
 
 ### Requisito 3: Usuário desativado
 
-Usuários desativados NÃO DEVEM receber novos tokens de acesso.
+Usuários desativados SHALL NOT receber novos tokens de acesso.
 
 #### Cenário: Login bloqueado
 
@@ -37,4 +37,4 @@ Usuários desativados NÃO DEVEM receber novos tokens de acesso.
 
 ### Requisito 4: Usuário ativo
 
-Usuários ativos com credenciais válidas DEVEM continuar podendo autenticar conforme a política vigente.
+Usuários ativos com credenciais válidas SHALL continuar podendo autenticar conforme a política vigente.

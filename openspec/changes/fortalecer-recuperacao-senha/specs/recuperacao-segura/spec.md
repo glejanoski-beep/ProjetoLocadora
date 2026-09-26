@@ -6,7 +6,7 @@ Define a recuperação de senha por magic link com respostas que protegem a priv
 
 ### Requirement: Resposta de recuperação não revela cadastro
 
-O sistema DEVE apresentar respostas públicas indistinguíveis para pedidos de recuperação associados a e-mails cadastrados e não cadastrados.
+O sistema SHALL apresentar respostas públicas indistinguíveis para pedidos de recuperação associados a e-mails cadastrados e não cadastrados.
 
 #### Scenario: Pedido para e-mail cadastrado
 
@@ -20,7 +20,7 @@ O sistema DEVE apresentar respostas públicas indistinguíveis para pedidos de r
 
 ### Requirement: Magic link pode ser consumido uma única vez
 
-O sistema DEVE aceitar um magic link válido no máximo uma vez, inclusive quando houver tentativas de consumo concorrentes.
+O sistema SHALL aceitar um magic link válido no máximo uma vez, inclusive quando houver tentativas de consumo concorrentes.
 
 #### Scenario: Primeiro consumo válido
 
@@ -34,7 +34,7 @@ O sistema DEVE aceitar um magic link válido no máximo uma vez, inclusive quand
 
 ### Requirement: Token de recuperação não é exposto
 
-O sistema NÃO DEVE devolver o token de recuperação ao chamador público nem registrá-lo em eventos de auditoria.
+O sistema SHALL NOT devolver o token de recuperação ao chamador público nem registrá-lo em eventos de auditoria.
 
 #### Scenario: Pedido público de recuperação
 
@@ -48,7 +48,7 @@ O sistema NÃO DEVE devolver o token de recuperação ao chamador público nem r
 
 ### Requirement: Link usa rota de recuperação do frontend Reflex
 
-O link enviado para recuperação DEVE direcionar para uma rota existente e documentada do frontend Reflex, e NÃO DEVE depender da rota de demonstração do template.
+O link enviado para recuperação SHALL direcionar para uma rota existente e documentada do frontend Reflex, e SHALL NOT depender da rota de demonstração do template.
 
 #### Scenario: Abertura do link de recuperação
 

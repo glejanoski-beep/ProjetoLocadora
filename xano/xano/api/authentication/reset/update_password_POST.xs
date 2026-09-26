@@ -35,9 +35,9 @@ query "reset/update_password" verb=POST {
     // Create event log
     function.run "Quick Start/log_event" {
       input = {
-        user_id : $user.id
-        action  : "reset_password"
-        metadata: $user
+        user_id: $user.id
+        action : "reset_password"
+        result : "success"
       }
     } as $event_log
   }

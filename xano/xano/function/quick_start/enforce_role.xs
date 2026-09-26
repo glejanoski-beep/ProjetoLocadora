@@ -51,6 +51,14 @@ function "Quick Start/enforce_role" {
     // Check if the user's role level is sufficient for the required role.
     conditional {
       if ($user_role_level < $required_role_level) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: $user.id
+            action : "authorization_denied"
+            result : "denied_role:" ~ $input.required_role
+          }
+        } as $event_log
+
         throw {
           name = "accessdenied"
           value = "User does not have the required role to perform this action. Required: " ~ $input.required_role ~ ", Actual: " ~ $user_role

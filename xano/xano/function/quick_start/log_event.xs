@@ -1,14 +1,11 @@
 // Creates a record in the event log table
 function "Quick Start/log_event" {
   input {
-    // Unique identifier for the user who performed the action.
-    int user_id
-  
-    // A description of the action performed by the user (e.g., 'login', 'created_invoice').
+    int user_id?
     text action
-  
-    // Additional data related to the event, such as resource IDs or old/new values.
-    json metadata?
+    text result?
+    text resource_type?
+    int resource_id?
   }
 
   stack {
@@ -18,7 +15,11 @@ function "Quick Start/log_event" {
         created_at: "now"
         user_id   : $input.user_id
         action    : $input.action
-        metadata  : $input.metadata
+        metadata  : {
+          result       : $input.result
+          resource_type: $input.resource_type
+          resource_id  : $input.resource_id
+        }
       }
     } as $new_log_entry
   }
