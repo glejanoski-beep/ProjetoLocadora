@@ -11,7 +11,7 @@ query "auth/me" verb=GET {
     db.get user {
       field_name = "id"
       field_value = $auth.id
-      output = ["id", "created_at", "name", "email", "role"]
+      output = ["id", "created_at", "name", "email", "role", "is_active"]
     } as $user
   
     // Create an event log for get user record
