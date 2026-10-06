@@ -1,61 +1,4 @@
-# Recuperação de Senha Segura
-
-## Purpose
-
-Define a recuperação de senha por magic link com respostas que protegem a privacidade e tokens de uso único integrados à interface Reflex.
-
-## Requirements
-
-### Requirement: Resposta de recuperação não revela cadastro
-
-O sistema SHALL apresentar respostas públicas indistinguíveis para pedidos de recuperação associados a e-mails cadastrados e não cadastrados.
-
-#### Scenario: Pedido para e-mail cadastrado
-
-- **WHEN** uma pessoa solicita recuperação usando um e-mail cadastrado
-- **THEN** o sistema processa o envio do magic link e retorna uma resposta genérica
-
-#### Scenario: Pedido para e-mail não cadastrado
-
-- **WHEN** uma pessoa solicita recuperação usando um e-mail não cadastrado
-- **THEN** o sistema retorna a mesma resposta genérica sem revelar a inexistência do cadastro
-
-### Requirement: Magic link pode ser consumido uma única vez
-
-O sistema SHALL aceitar um magic link válido no máximo uma vez, inclusive quando houver tentativas de consumo concorrentes.
-
-#### Scenario: Primeiro consumo válido
-
-- **WHEN** um magic link válido, não expirado e ainda não utilizado é consumido
-- **THEN** o sistema concede o acesso previsto pelo fluxo de recuperação e marca o token como utilizado
-
-#### Scenario: Tentativas concorrentes de consumo
-
-- **WHEN** duas requisições tentam consumir simultaneamente o mesmo magic link
-- **THEN** no máximo uma requisição recebe acesso e as demais são rejeitadas
-
-### Requirement: Token de recuperação não é exposto
-
-O sistema SHALL NOT devolver o token de recuperação ao chamador público nem registrá-lo em eventos de auditoria.
-
-#### Scenario: Pedido público de recuperação
-
-- **WHEN** uma pessoa solicita um magic link
-- **THEN** a resposta pública não contém o token de recuperação
-
-#### Scenario: Auditoria de recuperação
-
-- **WHEN** uma ação do fluxo de recuperação é registrada em auditoria
-- **THEN** o evento não contém token, senha, hash de senha ou objeto completo do usuário
-
-### Requirement: Link usa rota de recuperação do frontend Reflex
-
-O link enviado para recuperação SHALL direcionar para uma rota existente e documentada do frontend Reflex, e SHALL NOT depender da rota de demonstração do template.
-
-#### Scenario: Abertura do link de recuperação
-
-- **WHEN** a pessoa abre o link recebido por e-mail
-- **THEN** o navegador acessa a rota `/redefinir-senha` do frontend Reflex com os parâmetros necessários ao fluxo
+## ADDED Requirements
 
 ### Requirement: Funcionário pode solicitar recuperação pela interface Reflex
 
@@ -86,7 +29,7 @@ A aplicação SHALL ler `magic_token` e `email` da URL `/redefinir-senha` e cons
 
 #### Scenario: Link inválido, expirado ou usado
 
-- **WHEN** uma pessoa abre a tela com parâmetros ausentes ou um magic link inválido, expirado ou já usado
+- **WHEN** a pessoa abre a tela com parâmetros ausentes ou um magic link inválido, expirado ou já usado
 - **THEN** a aplicação não exibe o formulário de nova senha
 - **AND** apresenta uma mensagem genérica
 - **AND** oferece retorno para `/login`
@@ -97,14 +40,14 @@ A aplicação SHALL permitir informar nova senha e confirmação depois que o ma
 
 #### Scenario: Senhas válidas e iguais
 
-- **WHEN** uma pessoa informa uma senha válida e a confirmação correspondente
+- **WHEN** a pessoa informa uma senha válida e a confirmação correspondente
 - **THEN** a aplicação chama o endpoint de atualização de senha autenticado
 - **AND** exibe confirmação de sucesso
 - **AND** oferece retorno à tela de login
 
 #### Scenario: Senhas divergentes ou inválidas
 
-- **WHEN** uma pessoa informa senhas divergentes ou que não atendem à validação mínima
+- **WHEN** a pessoa informa senhas divergentes ou que não atendem à validação mínima
 - **THEN** a aplicação não chama o endpoint de atualização
 - **AND** exibe uma mensagem de validação
 

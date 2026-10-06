@@ -93,3 +93,78 @@ async def get_me_xano(
     except Exception as err:
         logger.error("Erro inesperado ao consultar auth/me no Xano: %s", type(err).__name__)
         return None
+
+
+async def request_password_reset(email: str, base_url: Optional[str] = None) -> bool:
+    """Solicita um magic link sem revelar se o e-mail existe."""
+    if not email:
+        return False
+
+    try:
+        url = (base_url or get_xano_api_url()).rstrip("/")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{url}/reset/request-reset-link",
+                params={"email": email.strip()},
+            )
+        return response.status_code == 200
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao solicitar recuperação: %s", type(err).__name__)
+        return False
+    except Exception as err:
+        logger.error("Erro inesperado ao solicitar recuperação: %s", type(err).__name__)
+        return False
+
+
+async def consume_password_reset_token(
+    magic_token: str, email: str, base_url: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Consome o magic link e retorna apenas o payload necessário ao fluxo privado."""
+    if not magic_token or not email:
+        return None
+
+    try:
+        url = (base_url or get_xano_api_url()).rstrip("/")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{url}/reset/magic-link-login",
+                json={"magic_token": magic_token, "email": email.strip()},
+            )
+        if response.status_code == 200:
+            payload = response.json()
+            if payload.get("authToken"):
+                return payload
+        return None
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consumir magic link: %s", type(err).__name__)
+        return None
+    except Exception as err:
+        logger.error("Erro inesperado ao consumir magic link: %s", type(err).__name__)
+        return None
+
+
+async def update_password_xano(
+    auth_token: str,
+    password: str,
+    confirm_password: str,
+    base_url: Optional[str] = None,
+) -> bool:
+    """Atualiza a senha usando o token privado retornado pelo magic link."""
+    if not auth_token or not password or password != confirm_password:
+        return False
+
+    try:
+        url = (base_url or get_xano_api_url()).rstrip("/")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{url}/reset/update_password",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={"password": password, "confirm_password": confirm_password},
+            )
+        return response.status_code == 200
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao atualizar senha: %s", type(err).__name__)
+        return False
+    except Exception as err:
+        logger.error("Erro inesperado ao atualizar senha: %s", type(err).__name__)
+        return False

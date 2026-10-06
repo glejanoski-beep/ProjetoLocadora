@@ -13,14 +13,16 @@ query "reset/request-reset-link" verb=GET {
 
     conditional {
       if ($token_and_email.token != null) {
-        var $api_base_url {
-          value = $env.$api_baseurl
+        var $frontend_base_url {
+          value = "http://localhost:3000"
         }
 
         var $magic_link {
-          value = $api_base_url
-            |concat:"redefinir-senha?magic_token=":$token_and_email.token
-            |concat:"&email=":$token_and_email.email
+          value = $frontend_base_url
+            |concat:"/redefinir-senha?magic_token="
+            |concat:($token_and_email|get:"token":"")
+            |concat:"&email="
+            |concat:($token_and_email|get:"email":"")
         }
 
         util.template_engine {

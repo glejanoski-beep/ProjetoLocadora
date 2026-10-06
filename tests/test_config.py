@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from ProjetoLocadora.config import get_xano_api_url
+from ProjetoLocadora.config import get_frontend_base_url, get_xano_api_url
 
 
 class TestConfig(unittest.TestCase):
@@ -25,6 +25,14 @@ class TestConfig(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 get_xano_api_url()
             self.assertIn("XANO_API_URL não configurada", str(ctx.exception))
+
+    def test_get_frontend_base_url_defaults_to_localhost(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(get_frontend_base_url(), "http://localhost:3000")
+
+    def test_get_frontend_base_url_uses_environment(self):
+        with patch.dict(os.environ, {"FRONTEND_BASE_URL": "https://app.example/"}):
+            self.assertEqual(get_frontend_base_url(), "https://app.example")
 
 
 if __name__ == "__main__":

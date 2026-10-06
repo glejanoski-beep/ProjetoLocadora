@@ -14,3 +14,8 @@ def get_xano_api_url() -> str:
     if not url or not url.strip():
         raise RuntimeError("Variável de ambiente XANO_API_URL não configurada.")
     return url.strip().rstrip("/")
+
+
+def get_frontend_base_url() -> str:
+    """Retorna a URL pública do frontend para o ambiente atual."""
+    return (os.getenv("FRONTEND_BASE_URL") or "http://localhost:3000").strip().rstrip("/")

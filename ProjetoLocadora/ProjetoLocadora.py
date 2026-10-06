@@ -6,9 +6,12 @@ import reflex as rx
 
 from ProjetoLocadora.xano_client import (
     GENERIC_AUTH_ERROR,
+    consume_password_reset_token,
     get_me_xano,
     is_authorized_employee,
     login_xano,
+    request_password_reset,
+    update_password_xano,
 )
 
 
@@ -24,6 +27,14 @@ class State(rx.State):
     _user_name: str = ""
     _user_email: str = ""
     _user_role: str = ""
+    _reset_request_email: str = ""
+    _reset_email: str = ""
+    _reset_auth_token: str = ""
+    _new_password: str = ""
+    _confirm_new_password: str = ""
+    reset_link_ready: bool = False
+    reset_message: str = ""
+    reset_message_is_error: bool = False
 
     @rx.var
     def is_authenticated(self) -> bool:
@@ -50,6 +61,15 @@ class State(rx.State):
 
     def capture_login_password(self, value: str) -> None:
         self._login_password = value
+
+    def capture_reset_request_email(self, value: str) -> None:
+        self._reset_request_email = value
+
+    def capture_new_password(self, value: str) -> None:
+        self._new_password = value
+
+    def capture_confirm_new_password(self, value: str) -> None:
+        self._confirm_new_password = value
 
     def _clear_session(self) -> None:
         self._login_email = ""
@@ -126,6 +146,62 @@ class State(rx.State):
         self._clear_session()
         return rx.redirect("/login")
 
+    async def request_reset_link(self) -> None:
+        email = self._reset_request_email.strip()
+        self.reset_message = "Se o e-mail estiver cadastrado, enviaremos um link para redefinição."
+        self.reset_message_is_error = False
+        if email:
+            await request_password_reset(email)
+
+    async def consume_reset_link(self) -> None:
+        params = self.router.page.params
+        magic_token = params.get("magic_token", "")
+        email = params.get("email", "")
+        if not magic_token or not email:
+            self.reset_message = "O link de redefinição é inválido ou está incompleto."
+            self.reset_message_is_error = True
+            return
+
+        reset_data = await consume_password_reset_token(magic_token, email)
+        if not reset_data or not reset_data.get("authToken"):
+            self.reset_message = "O link de redefinição é inválido, expirou ou já foi usado."
+            self.reset_message_is_error = True
+            return
+
+        self._reset_auth_token = str(reset_data["authToken"])
+        self._reset_email = email
+        self.reset_link_ready = True
+        self.reset_message = "Escolha uma nova senha para sua conta."
+        self.reset_message_is_error = False
+
+    async def update_password(self) -> None:
+        password = self._new_password
+        confirm_password = self._confirm_new_password
+        if len(password) < 8 or password != confirm_password:
+            self.reset_message = "Informe duas senhas iguais com pelo menos 8 caracteres."
+            self.reset_message_is_error = True
+            self._reset_auth_token = ""
+            self._new_password = ""
+            self._confirm_new_password = ""
+            self.reset_link_ready = False
+            return
+
+        updated = await update_password_xano(
+            self._reset_auth_token,
+            password,
+            confirm_password,
+        )
+        self._reset_auth_token = ""
+        self._new_password = ""
+        self._confirm_new_password = ""
+        self.reset_link_ready = False
+        if not updated:
+            self.reset_message = "Não foi possível atualizar a senha. Solicite um novo link."
+            self.reset_message_is_error = True
+            return
+
+        return rx.redirect("/login")
+
 
 @rx.page(route="/login", on_load=State.restore_session)
 def login_page() -> rx.Component:
@@ -167,7 +243,7 @@ def login_page() -> rx.Component:
             ),
             rx.link(
                 "Recuperar senha",
-                href="/redefinir-senha",
+                href="/recuperar-senha",
                 color="blue",
             ),
             spacing="4",
@@ -288,18 +364,94 @@ def backoffice_page() -> rx.Component:
     )
 
 
-@rx.page(route="/redefinir-senha")
-def reset_password_page() -> rx.Component:
+@rx.page(route="/recuperar-senha")
+def request_reset_page() -> rx.Component:
     return rx.container(
         rx.vstack(
-            rx.heading("Redefinição de senha", size="8"),
-            rx.text(
-                "Use o link recebido por e-mail para continuar a redefinição da sua senha."
+            rx.heading("Recuperar senha", size="8"),
+            rx.text("Informe seu e-mail para receber um link de redefinição."),
+            rx.input(
+                placeholder="E-mail",
+                type="email",
+                required=True,
+                size="3",
+                on_change=State.capture_reset_request_email,
+            ),
+            rx.button(
+                "Enviar link",
+                on_click=State.request_reset_link,
+                size="3",
+                width="100%",
+            ),
+            rx.cond(
+                State.reset_message != "",
+                rx.callout(
+                    State.reset_message,
+                    color_scheme="red",
+                    role="status",
+                ),
             ),
             rx.link("Voltar ao login", href="/login"),
             spacing="4",
             justify="center",
             min_height="85vh",
+            max_width="28rem",
+            margin="auto",
+        )
+    )
+
+
+@rx.page(route="/redefinir-senha", on_load=State.consume_reset_link)
+def reset_password_page() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.heading("Redefinição de senha", size="8"),
+            rx.cond(
+                State.reset_message != "",
+                rx.callout(
+                    State.reset_message,
+                    color_scheme=rx.cond(State.reset_message_is_error, "red", "green"),
+                    role="status",
+                ),
+            ),
+            rx.cond(
+                State.reset_link_ready,
+                rx.vstack(
+                    rx.input(
+                        placeholder="Nova senha",
+                        type="password",
+                        required=True,
+                        min_length=8,
+                        size="3",
+                        on_change=State.capture_new_password,
+                    ),
+                    rx.input(
+                        placeholder="Confirme a nova senha",
+                        type="password",
+                        required=True,
+                        min_length=8,
+                        size="3",
+                        on_change=State.capture_confirm_new_password,
+                    ),
+                    rx.button(
+                        "Atualizar senha",
+                        on_click=State.update_password,
+                        size="3",
+                        width="100%",
+                    ),
+                    spacing="4",
+                    width="100%",
+                ),
+                rx.text(
+                    "Abra o link recebido por e-mail para habilitar a troca da senha."
+                ),
+            ),
+            rx.link("Voltar ao login", href="/login"),
+            spacing="4",
+            justify="center",
+            min_height="85vh",
+            max_width="28rem",
+            margin="auto",
         )
     )
 

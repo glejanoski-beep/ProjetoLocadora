@@ -22,12 +22,23 @@ class TestReflexAuthState(unittest.TestCase):
     def test_password_is_not_persisted_in_reflex_state(self):
         self.assertNotIn("password", State.base_vars)
 
+    def test_reset_auth_token_and_passwords_are_backend_only(self):
+        for field_name in ("_reset_auth_token", "_new_password", "_confirm_new_password"):
+            with self.subTest(field=field_name):
+                self.assertIn(field_name, State.backend_vars)
+                self.assertNotIn(field_name, State.base_vars)
+
     def test_identity_assignment_helper_is_not_a_public_event(self):
         self.assertFalse(hasattr(State, "set_user"))
 
     def test_state_has_login_and_logout_handlers(self):
         self.assertTrue(callable(getattr(State, "handle_login", None)))
         self.assertTrue(callable(getattr(State, "logout", None)))
+
+    def test_state_has_password_recovery_handlers(self):
+        self.assertTrue(callable(getattr(State, "request_reset_link", None)))
+        self.assertTrue(callable(getattr(State, "consume_reset_link", None)))
+        self.assertTrue(callable(getattr(State, "update_password", None)))
 
     def test_member_and_admin_active_users_are_allowed(self):
         self.assertTrue(
