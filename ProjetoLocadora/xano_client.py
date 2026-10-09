@@ -1,13 +1,190 @@
 import logging
 from typing import Any, Dict, Optional
+from urllib.parse import quote
+
 import httpx
 
+from ProjetoLocadora.catalogo_filmes import Filme
 from ProjetoLocadora.config import get_xano_api_url
 
 logger = logging.getLogger(__name__)
 
 GENERIC_AUTH_ERROR = "Credenciais inválidas ou conta sem acesso."
 ALLOWED_ROLES = {"member", "admin"}
+
+
+class XanoCatalogError(Exception):
+    """Falha explícita em uma operação do catálogo no Xano."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.user_message = message
+
+
+class XanoAuditError(XanoCatalogError):
+    """O Xano persistiu o filme, mas não confirmou o evento de auditoria."""
+
+
+def _catalog_endpoint(path: str) -> str:
+    try:
+        base_url = get_xano_api_url().rstrip("/")
+    except RuntimeError as err:
+        raise XanoCatalogError("A integração com o catálogo não está configurada.") from err
+    return f"{base_url}/catalogo-filmes/filmes{path}"
+
+
+def _catalog_headers(auth_token: str) -> dict[str, str]:
+    if not auth_token:
+        raise XanoCatalogError("Sua sessão expirou. Entre novamente.")
+    return {"Authorization": f"Bearer {auth_token}"}
+
+
+def _raise_catalog_http_error(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+
+    if response.status_code in (401, 403):
+        message = "Você não tem permissão para realizar esta operação."
+    elif response.status_code == 404:
+        message = "Filme não encontrado."
+    elif response.status_code in (400, 422):
+        message = "Os dados enviados não foram aceitos pelo catálogo."
+    else:
+        message = "Não foi possível concluir a operação no catálogo."
+    logger.warning("Operação do catálogo recusada pelo Xano (HTTP %s)", response.status_code)
+    raise XanoCatalogError(message)
+
+
+def _is_film(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("id"), int)
+        and isinstance(value.get("titulo"), str)
+        and isinstance(value.get("genero"), str)
+        and isinstance(value.get("ano_lancamento"), int)
+        and isinstance(value.get("classificacao"), str)
+        and isinstance(value.get("valor_locacao_centavos"), int)
+        and isinstance(value.get("status"), str)
+    )
+
+
+def _film_response(response: httpx.Response) -> Filme:
+    try:
+        film = response.json()
+    except ValueError as err:
+        raise XanoCatalogError("O Xano retornou uma resposta inválida para o filme.") from err
+    if not _is_film(film):
+        raise XanoCatalogError("O Xano retornou uma resposta inválida para o filme.")
+    return film
+
+
+def _write_film_response(response: httpx.Response) -> Filme:
+    try:
+        result = response.json()
+    except ValueError as err:
+        raise XanoCatalogError("O Xano retornou uma resposta inválida para o filme.") from err
+
+    if (
+        isinstance(result, dict)
+        and result.get("audit_succeeded") is False
+        and _is_film(result.get("film"))
+    ):
+        raise XanoAuditError(
+            "O filme foi gravado, mas a auditoria não foi concluída. "
+            "Não repita a operação; confirme o estado do catálogo antes de tentar novamente."
+        )
+    if (
+        not isinstance(result, dict)
+        or result.get("audit_succeeded") is not True
+        or not _is_film(result.get("film"))
+    ):
+        raise XanoCatalogError("O Xano retornou uma resposta inválida para a gravação do filme.")
+    return result["film"]
+
+
+async def list_films_xano(
+    auth_token: str,
+    *,
+    titulo: str = "",
+    genero: str = "",
+) -> list[Filme]:
+    params = {}
+    if titulo.strip():
+        params["titulo"] = titulo.strip()
+    if genero.strip():
+        params["genero"] = genero.strip()
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                _catalog_endpoint(""),
+                headers=_catalog_headers(auth_token),
+                params=params,
+            )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consultar o catálogo: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível consultar os filmes no Xano.") from err
+
+    _raise_catalog_http_error(response)
+    try:
+        films = response.json()
+    except ValueError as err:
+        raise XanoCatalogError("O Xano retornou uma lista de filmes inválida.") from err
+    if not isinstance(films, list) or any(
+        not _is_film(film)
+        for film in films
+    ):
+        raise XanoCatalogError("O Xano retornou uma lista de filmes inválida.")
+    return films
+
+
+async def get_film_xano(auth_token: str, film_id: int) -> Filme:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                _catalog_endpoint(f"/{quote(str(film_id), safe='')}"),
+                headers=_catalog_headers(auth_token),
+            )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consultar um filme: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível carregar o filme no Xano.") from err
+
+    _raise_catalog_http_error(response)
+    return _film_response(response)
+
+
+async def create_film_xano(auth_token: str, data: dict[str, Any]) -> Filme:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                _catalog_endpoint(""),
+                headers=_catalog_headers(auth_token),
+                json=data,
+            )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao cadastrar filme: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível cadastrar o filme no Xano.") from err
+
+    _raise_catalog_http_error(response)
+    return _write_film_response(response)
+
+
+async def update_film_xano(
+    auth_token: str, film_id: int, data: dict[str, Any]
+) -> Filme:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.patch(
+                _catalog_endpoint(f"/{quote(str(film_id), safe='')}"),
+                headers=_catalog_headers(auth_token),
+                json=data,
+            )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao editar filme: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível editar o filme no Xano.") from err
+
+    _raise_catalog_http_error(response)
+    return _write_film_response(response)
 
 
 def is_authorized_employee(me_data: Optional[Dict[str, Any]]) -> bool:

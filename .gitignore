@@ -1,7 +1,11 @@
 assets/external/
 __pycache__/
+.pytest_cache/
 .states
 *.py[cod]
 .web
 *.db
 .venv
+.env
+.env.*
+!.env.example
