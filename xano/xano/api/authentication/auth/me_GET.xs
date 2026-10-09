@@ -8,7 +8,10 @@ query "auth/me" verb=GET {
 
   stack {
     function.run "Quick Start/enforce_role" {
-      input = {user_id: $auth.id, required_role: "member"}
+      input = {
+        user_id: $auth.id
+        required_role: "member"
+      }
     } as $role_check
 
     // Get the user record based on the auth ID

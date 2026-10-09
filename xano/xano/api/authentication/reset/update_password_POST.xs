@@ -10,7 +10,10 @@ query "reset/update_password" verb=POST {
 
   stack {
     function.run "Quick Start/enforce_role" {
-      input = {user_id: $auth.id, required_role: "member"}
+      input = {
+        user_id: $auth.id
+        required_role: "member"
+      }
     } as $role_check
 
     // Check that the password inputs are matching
