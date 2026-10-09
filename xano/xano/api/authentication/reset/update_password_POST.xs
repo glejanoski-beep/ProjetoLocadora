@@ -9,6 +9,13 @@ query "reset/update_password" verb=POST {
   }
 
   stack {
+    function.run "Quick Start/enforce_role" {
+      input = {
+        user_id: $auth.id
+        required_role: "member"
+      }
+    } as $role_check
+
     // Check that the password inputs are matching
     precondition ($input.password == $input.confirm_password) {
       error = "Passwords do not match!"

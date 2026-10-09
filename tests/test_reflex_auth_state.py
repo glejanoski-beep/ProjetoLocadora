@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
+import httpx
 from ProjetoLocadora.ProjetoLocadora import State
-from ProjetoLocadora.xano_client import is_authorized_employee
+from ProjetoLocadora.xano_client import get_me_xano, is_authorized_employee
 
 
 class TestReflexAuthState(unittest.TestCase):
@@ -58,6 +60,125 @@ class TestReflexAuthState(unittest.TestCase):
 
     def test_legacy_account_without_active_flag_remains_allowed(self):
         self.assertTrue(is_authorized_employee({"id": 5, "role": "member"}))
+
+
+class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
+    async def test_login_accepts_active_member_and_admin(self):
+        for role in ("member", "admin"):
+            with self.subTest(role=role):
+                state = State(_reflex_internal_init=True)
+                state._login_email = f"{role}@example.test"
+                state._login_password = "test-password"
+
+                with (
+                    patch(
+                        "ProjetoLocadora.ProjetoLocadora.login_xano",
+                        new=AsyncMock(
+                            return_value={"authToken": f"token-{role}"}
+                        ),
+                    ) as login,
+                    patch(
+                        "ProjetoLocadora.ProjetoLocadora.get_me_xano",
+                        new=AsyncMock(
+                            return_value={
+                                "id": 1,
+                                "name": role,
+                                "email": f"{role}@example.test",
+                                "role": role,
+                                "is_active": True,
+                            }
+                        ),
+                    ) as get_me,
+                ):
+                    await state.handle_login()
+
+                login.assert_awaited_once_with(
+                    f"{role}@example.test", "test-password"
+                )
+                get_me.assert_awaited_once_with(f"token-{role}")
+                self.assertEqual(state._xano_auth_token, f"token-{role}")
+                self.assertEqual(state._user_role, role)
+                self.assertEqual(state._user_id, "1")
+
+    async def test_session_revalidation_clears_inactive_account(self):
+        state = State(_reflex_internal_init=True)
+        state._xano_auth_token = "valid-token"
+        state._user_id = "42"
+        state._user_name = "Inactive User"
+        state._user_email = "inactive@example.test"
+        state._user_role = "member"
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.get_me_xano",
+            new=AsyncMock(
+                return_value={
+                    "id": 42,
+                    "role": "member",
+                    "is_active": False,
+                }
+            ),
+        ) as get_me:
+            redirect = await state.require_session()
+
+        get_me.assert_awaited_once_with("valid-token")
+        self.assertEqual(redirect.args[0][1]._var_value, "/login")
+        self.assertFalse(state.is_authenticated)
+        self.assertEqual(state._xano_auth_token, "")
+        self.assertEqual(state._user_id, "")
+        self.assertEqual(state._user_name, "")
+        self.assertEqual(state._user_email, "")
+        self.assertEqual(state._user_role, "")
+
+    async def test_logout_clears_session_and_redirects_to_login(self):
+        state = State(_reflex_internal_init=True)
+        state._xano_auth_token = "valid-token"
+        state._user_id = "42"
+        state._user_role = "admin"
+
+        redirect = await state.logout()
+
+        self.assertEqual(redirect.args[0][1]._var_value, "/login")
+        self.assertFalse(state.is_authenticated)
+        self.assertEqual(state._xano_auth_token, "")
+        self.assertEqual(state._user_id, "")
+        self.assertEqual(state._user_role, "")
+
+    async def test_get_me_sends_bearer_token_using_local_mock_transport(self):
+        auth_token = "test-token"
+        real_async_client = httpx.AsyncClient
+
+        def handle_request(request):
+            self.assertEqual(
+                request.headers["Authorization"],
+                f"Bearer {auth_token}",
+            )
+            self.assertEqual(str(request.url), "https://xano.test/api/auth/me")
+            return httpx.Response(
+                200,
+                json={
+                    "id": 42,
+                    "role": "member",
+                    "is_active": True,
+                },
+            )
+
+        def mock_client_factory(**kwargs):
+            return real_async_client(
+                transport=httpx.MockTransport(handle_request),
+                **kwargs,
+            )
+
+        with patch(
+            "ProjetoLocadora.xano_client.httpx.AsyncClient",
+            side_effect=mock_client_factory,
+        ):
+            result = await get_me_xano(
+                auth_token,
+                base_url="https://xano.test/api",
+            )
+
+        self.assertEqual(result["id"], 42)
+        self.assertEqual(result["role"], "member")
 
 
 if __name__ == "__main__":

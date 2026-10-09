@@ -18,13 +18,31 @@ function "Quick Start/enforce_role" {
     db.get user {
       field_name = "id"
       field_value = $input.user_id
-      output = ["role"]
+      output = ["role", "is_active"]
     } as $user
   
     // Ensure the user exists
     precondition ($user != null) {
       error_type = "inputerror"
       error = "User not found with the provided ID."
+    }
+
+    // Explicitly inactive users cannot use an existing token.
+    conditional {
+      if ($user.is_active == false) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: $user.id
+            action : "authorization_denied"
+            result : "denied_inactive"
+          }
+        } as $event_log
+
+        throw {
+          name = "accessdenied"
+          value = "User account is inactive."
+        }
+      }
     }
   
     // Extract the user's role from the retrieved user data.
@@ -35,6 +53,24 @@ function "Quick Start/enforce_role" {
     // Get the numerical level of the user's role. Defaults to 0 if not defined.
     var $user_role_level {
       value = $role_hierarchy|get:$user_role
+    }
+
+    // The user's role must be recognized, even when a minimum role is supplied.
+    conditional {
+      if ($user_role_level == null || $user_role_level <= 0) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: $user.id
+            action : "authorization_denied"
+            result : "denied_role_unrecognized"
+          }
+        } as $event_log
+
+        throw {
+          name = "accessdenied"
+          value = "User has an unrecognized role."
+        }
+      }
     }
   
     // Get the numerical level of the required role. Defaults to 0 if not defined.

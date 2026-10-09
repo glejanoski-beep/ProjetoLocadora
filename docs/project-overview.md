@@ -25,9 +25,9 @@ O projeto busca organizar essas informações em um fluxo único, com regras cla
 
 Os principais usuários são:
 
-- **Atendentes:** cadastram clientes, consultam o acervo, realizam locações, registram devoluções e pagamentos.
-- **Gerentes ou administradores:** acompanham a operação, gerenciam usuários e funcionários, consultam relatórios e supervisionam regras e permissões.
-- **Funcionários autorizados:** executam as tarefas operacionais permitidas pelo seu perfil de acesso.
+- **Usuários internos:** acessam o backoffice conforme o papel `admin` ou `member`; a entidade Funcionário pode ser associada para representar o vínculo profissional, mas não é necessária para autenticação.
+- **Administradores (`admin`):** acompanham a operação, gerenciam acessos e executam operações administrativas, respeitando as regras de negócio e a preservação do histórico.
+- **Membros (`member`):** consultam cadastros e executam as operações operacionais que forem explicitamente permitidas pela política e pelas regras de negócio.
 - **Clientes da locadora:** são a origem dos contratos, históricos, pagamentos e bloqueios, ainda que o acesso direto ao sistema não esteja definido para o escopo inicial.
 
 ## 5. Escopo inicial
@@ -41,7 +41,7 @@ O escopo inicial contempla o backoffice da locadora e o controle das seguintes e
 - multas por atraso;
 - pagamentos;
 - histórico de locações;
-- usuários, funcionários e permissões;
+- usuários e permissões; o vínculo com Funcionário é opcional e não condiciona autenticação;
 - relatórios operacionais.
 
 O escopo inicial não define, neste momento, um aplicativo voltado diretamente aos clientes, integração com meios de pagamento, integração com fornecedores ou canais externos de comunicação. Essas possibilidades poderão ser avaliadas em futuras evoluções.
@@ -68,7 +68,7 @@ O escopo inicial não define, neste momento, um aplicativo voltado diretamente a
 
 ### Administração e acompanhamento
 
-13. **Controle de usuários e funcionários:** cadastrar usuários internos, definir perfis e controlar o acesso às operações autorizadas.
+13. **Controle de acesso:** manter usuários internos e seus papéis `admin/member`; a associação com Funcionário é opcional e não substitui a autorização por papel.
 14. **Relatórios de locações:** apresentar informações consolidadas sobre locações, devoluções, atrasos e pagamentos.
 15. **Relatórios de filmes mais alugados:** identificar a procura pelo catálogo para apoiar decisões de aquisição e gestão do acervo.
 
@@ -110,7 +110,19 @@ A estratégia de hospedagem e eventuais integrações externas ainda não estão
 
 ## 10. Segurança e integridade
 
-O acesso ao sistema deve exigir autenticação e respeitar o perfil do usuário. Operações administrativas e alterações sensíveis devem ser limitadas a funcionários autorizados e, quando aplicável, registradas em logs de eventos.
+O acesso ao sistema deve exigir autenticação e respeitar o papel atual do usuário (`admin` ou `member`). A autorização é verificada no backend; um vínculo com Funcionário não é requisito de autenticação. Operações administrativas e alterações sensíveis devem ser limitadas a `admin` e, quando aplicável, registradas em logs de eventos.
+
+| Operação | `member` | `admin` |
+|---|---|---|
+| Consultar clientes, filmes e exemplares | Permitido | Permitido |
+| Cadastrar, editar, inativar ou excluir clientes, filmes e exemplares | Não permitido | Permitido, respeitadas as invariantes e a preservação do histórico |
+| Incluir locações | Permitido, conforme regras de negócio | Permitido, conforme regras de negócio |
+| Registrar pagamentos conforme obrigação/saldo | Permitido | Permitido |
+| Registrar multas conforme política de cálculo | Permitido | Permitido |
+| Gerir papéis e estado de acesso | Não permitido | Permitido |
+| Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
+
+Contas existentes preservam seus papéis e estados; para compatibilidade, ausência de valor explícito no estado de acesso de uma conta legada é tratada como ativa. Contas explicitamente desativadas não podem executar operações protegidas, mesmo com token ainda válido. Operações sem permissão explicitamente definida para `member` não são liberadas por omissão. Esta matriz define a política, mas não significa que os módulos operacionais futuros já estejam implementados.
 
 A integridade dos dados é especialmente importante nas transições de uma locação: criação, devolução, cálculo de multa, pagamento e atualização da disponibilidade do exemplar. Essas operações devem evitar estados contraditórios, como um exemplar simultaneamente disponível e alugado ou uma multa marcada como paga sem um pagamento registrado.
 

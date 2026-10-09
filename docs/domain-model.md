@@ -257,21 +257,21 @@ Representa a identidade autenticada de uma pessoa que utiliza o sistema em nome 
 #### Responsabilidade
 
 - Autenticar o acesso ao sistema.
-- Executar somente as operações permitidas pelo seu perfil.
+- Executar somente as operações permitidas pelo papel de acesso atual.
 - Ser identificado nos registros de operações relevantes.
 
 #### Principais informações
 
 - credenciais ou referência de autenticação;
-- nome e contato profissional;
+- nome e contato;
 - situação de acesso;
-- perfil ou papéis atribuídos;
+- papel de acesso (`admin` ou `member`, conforme a política atual);
 - datas de criação e último acesso, quando aplicável.
 
 #### Relacionamentos
 
-- Um usuário interno pode estar associado a um funcionário.
-- Um usuário interno possui um ou mais perfis de acesso.
+- Um usuário interno pode ser associado opcionalmente a um funcionário; esse vínculo não é requisito para autenticação.
+- Um usuário interno possui um papel de acesso atual, entre `admin` e `member`.
 - Um usuário interno pode registrar locações, devoluções, pagamentos e alterações administrativas, conforme permissão.
 
 #### Regras estruturais importantes
@@ -282,12 +282,12 @@ Representa a identidade autenticada de uma pessoa que utiliza o sistema em nome 
 
 ### Funcionário
 
-Representa a pessoa que trabalha na locadora e pode receber acesso operacional ao sistema.
+Representa a pessoa que trabalha na locadora. O conceito pode ser associado a um usuário interno, mas essa associação não é obrigatória para autenticação ou autorização no modelo atual.
 
 #### Responsabilidade
 
 - Descrever o vínculo profissional do usuário com a locadora.
-- Apoiar a atribuição de permissões e a identificação dos responsáveis pelas operações.
+- Apoiar a identificação dos responsáveis pelas operações e, quando aplicável, associar-se a um usuário interno.
 
 #### Principais informações
 
@@ -299,39 +299,54 @@ Representa a pessoa que trabalha na locadora e pode receber acesso operacional a
 
 #### Relacionamentos
 
-- Um funcionário pode possuir um usuário interno.
-- Um funcionário pode exercer um perfil de acesso.
+- Um funcionário pode estar associado opcionalmente a um usuário interno.
 - Um funcionário pode ser responsável por operações registradas no sistema.
 
 #### Regras estruturais importantes
 
-- O encerramento do vínculo deve impedir novos acessos sem apagar o histórico de operações realizadas.
-- A associação entre funcionário e usuário deve ser suficientemente clara para auditoria.
+- O vínculo funcional e sua situação não substituem a verificação do estado de acesso e do papel do usuário.
+- A associação opcional entre funcionário e usuário deve ser suficientemente clara para auditoria, quando existir.
 
-### Perfil de acesso
+### Papel de acesso
 
-Representa o conjunto de permissões que define quais operações um usuário interno pode executar.
+Representa a classificação usada atualmente para determinar quais operações um usuário interno pode executar. O sistema utiliza os papéis `admin` e `member`; múltiplos perfis por usuário não fazem parte da política atual.
 
 #### Responsabilidade
 
-- Organizar permissões por função, como atendimento, gerência ou administração.
+- Distinguir permissões operacionais de `member` das permissões administrativas de `admin`.
 - Impedir acesso indevido a dados e operações sensíveis.
 
 #### Principais informações
 
-- nome do perfil;
+- nome do papel;
 - permissões concedidas;
-- situação do perfil.
+- situação do acesso do usuário.
 
 #### Relacionamentos
 
-- Um perfil pode ser atribuído a vários usuários internos.
-- Um usuário interno pode possuir um ou mais papéis, conforme a política adotada.
+- Cada usuário interno possui um papel atual reconhecido pela política de acesso.
 
 #### Regras estruturais importantes
 
-- Permissões administrativas e financeiras devem ser concedidas somente a perfis autorizados.
-- Alterações de permissões devem ser rastreáveis.
+- `admin` possui acesso geral às operações implementadas, sujeito às regras de negócio, consistência financeira e preservação do histórico.
+- Operações sem permissão explicitamente definida para `member` não são concedidas por omissão.
+- Gestão de papéis e estado de acesso é restrita a `admin` e deve ser rastreável.
+- Contas explicitamente desativadas não podem executar operações protegidas, mesmo com token ainda válido.
+- Para compatibilidade, conta legada sem valor explícito de estado de acesso continua tratada como ativa.
+
+#### Matriz atual de permissões
+
+| Operação | `member` | `admin` |
+|---|---|---|
+| Consultar clientes, filmes e exemplares | Permitido | Permitido |
+| Cadastrar, editar, inativar ou excluir clientes, filmes e exemplares | Não permitido | Permitido, respeitadas as regras de negócio e a preservação do histórico |
+| Incluir locações | Permitido, sujeito às regras de negócio | Permitido, sujeito às regras de negócio |
+| Registrar pagamentos conforme o saldo e a obrigação | Permitido | Permitido |
+| Registrar multas conforme a política de cálculo | Permitido | Permitido |
+| Gerir papéis e estado de acesso | Não permitido | Permitido |
+| Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
+
+Devoluções, reservas, relatórios e operações ainda não especificadas não recebem permissão por analogia; suas Changes devem definir os papéis autorizados. Esta matriz define a política, mas não significa que os respectivos módulos ou endpoints já estejam implementados.
 
 ### Registro de evento
 
@@ -408,4 +423,3 @@ Essas decisões devem ser detalhadas nas especificações de cada mudança antes
 ## 7. Relação com a persistência
 
 Este documento descreve conceitos e relacionamentos do domínio, não um esquema físico de banco de dados. A implementação em Xano/XanoScript pode decompor, combinar ou materializar esses conceitos em tabelas, APIs, funções e visões, desde que preserve as responsabilidades, relacionamentos e invariantes aqui definidos.
-

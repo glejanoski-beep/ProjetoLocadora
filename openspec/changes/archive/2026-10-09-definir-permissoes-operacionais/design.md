@@ -47,23 +47,26 @@ Alternativa: confiar apenas na revalidação Reflex. Não escolhida porque chama
 | Estornar, cancelar ou ajustar transação financeira | `admin` |
 | Gerenciar papéis e estado de acesso | `admin` |
 
-Confirmado pelo usuário: leitura de cadastros para `member`, manutenção de clientes/filmes restrita, inclusão de locações e operação de pagamentos/multas permitidas, `admin` com acesso geral, conta interna suficiente e cadastro público com acesso automático.
+Decisões confirmadas pelo solicitante nesta etapa de Review: `member` pode consultar clientes, filmes e exemplares; a manutenção desses cadastros exige `admin`; `member` pode incluir locações e registrar pagamentos e multas conforme as regras de negócio; estornos, cancelamentos e ajustes financeiros ficam restritos a `admin`; `admin` tem acesso geral sujeito às regras de negócio; a entidade Funcionário é opcional e não é requisito para autenticação; os papéis atuais são `admin` e `member`; e o cadastro público concede acesso automático como `member`.
 
-Complementos propostos para Review: exemplares seguem a mesma separação entre consulta e manutenção; estornos, cancelamentos e ajustes ficam com `admin`. Essa política não define fórmulas financeiras nem permite alterar histórico silenciosamente. Registrar uma transação pode atualizar o estado relacionado pelo fluxo de negócio sem conceder manutenção livre de cadastro. Devolução, reservas e relatórios ainda exigem definição de permissão em suas próprias Changes; não conceder acesso por analogia.
+Essa política não define fórmulas financeiras nem permite alterar histórico silenciosamente. A permissão administrativa para excluir cadastros continua sujeita às invariantes de negócio e de preservação do histórico. Registrar uma transação pode atualizar o estado relacionado pelo fluxo de negócio sem conceder manutenção livre de cadastro. Devolução, reservas e relatórios ainda exigem definição de permissão em suas próprias Changes; não conceder acesso por analogia.
 
 ### 4. Preservar identidade e compatibilidade
 
 Não migrar contas, não exigir aprovação, não criar funcionário e não promover/desativar usuários por aplicação da Change. O administrador continua controlando papel e estado pelo mecanismo administrativo disponível no Xano; uma interface própria é futura. O Reflex continua aceitando contas ativas `member/admin` e limpando a sessão quando `auth/me` recusa a revalidação. Não introduzir cookies com bearer nem um segundo modelo de autorização no frontend.
 
-### 5. Verificação proporcional em Xano de teste
+### 5. Verificação acadêmica sem ambiente Xano de teste
 
-Usar branch ou workspace Xano de teste separado de produção, conforme disponibilidade da plataforma, com as mesmas exportações e contas fictícias: `admin` ativo, `member` ativo e conta desativada após emissão de token. Usar infraestrutura Xano existente, sem emulador ou serviços novos. Obter credenciais pelo meio seguro disponível, nunca em artefatos ou logs.
+Não será criado nem solicitado um branch ou workspace Xano separado. Não executar funções, chamadas, testes ou operações de escrita no Xano remoto; não preparar destinatário de e-mail, conta descartável ou baseline. A falta desses recursos limita as conclusões, mas não bloqueia a avaliação acadêmica baseada nas evidências locais.
 
-Exercitar os endpoints existentes diretamente, sem depender da interface. Para o teste autorizado de e-mail, usar destinatário de teste e serviço configurado para testes; se indisponível, registrar o caso como não executado, sem alegar validação completa. Para senha, usar somente conta descartável. Exercitar também a função reutilizável no runner Xano com `required_role` igual a `member/admin`, papel ausente/desconhecido e papel requerido inválido, sem alterar schemas de produção.
+Classificar as evidências sem extrapolar seu alcance:
 
-Matriz mínima de evidência: não autenticado recusado; `member` recusado em operação administrativa; `admin` ativo autorizado; ambos os papéis ativos autorizados em operação comum; token emitido antes da desativação recusado; estado legado com papel válido compatível; auditoria mínima sem segredos. Contar eventos de envio, comparar dados antes/depois e verificar respostas para provar ausência de efeito em recusas.
+- **Estrutural/estática:** os testes existentes inspecionam os contratos no XanoScript, a ordem da guarda, os campos de auditoria, os filtros por identidade e os fluxos de cadastro e senha. Isso demonstra propriedades do código-fonte, não execução do stack Xano.
+- **Sintaxe:** registrar os resultados já obtidos pelo validador XanoScript; sintaxe válida não comprova comportamento ou persistência.
+- **Mockada/local:** os testes Reflex simulam login e resposta de identidade, revalidação de conta inativa, logout e transporte HTTP local. Não comprovam autenticação, autorização ou navegação integradas.
+- **Runtime/compilação:** identificar explicitamente como não executados os casos Xano. Registrar a compilação Reflex bloqueada pelo Controle de Aplicativo do Windows como não concluída; não contornar a política nem inferir incompatibilidade de versões.
 
-Executar testes Python e compilação Reflex, além de login/revalidação/logout no ambiente de teste. Não descrever os testes estruturais atuais como cobertura de integração. Cenários de clientes, acervo e financeiro são obrigações das respectivas Changes, não testes executáveis nesta base.
+Para cada cenário, indicar qual evidência realmente o cobre e marcar como não executados ou não comprovados os cenários sem evidência. Não alegar persistência de auditoria, recusa efetiva no runtime, envio ou ausência de envio, alteração ou preservação real de dados, nem ausência de efeitos operacionais. Os cenários das capacidades ainda inexistentes permanecem responsabilidade de Changes futuras.
 
 ## Risks / Trade-offs
 
@@ -71,13 +74,13 @@ Executar testes Python e compilação Reflex, além de login/revalidação/logou
 - Acesso geral do `admin` pode ser confundido com dispensa de regras -> aplicar validações de negócio após autorização para todos os papéis.
 - Tokens anteriores continuam criptograficamente válidos -> consultar estado atual em cada operação protegida; não depender de logout ou expiração.
 - Função compartilhada altera todos os chamadores -> preservar assinatura, testar os endpoints e compatibilidade de contas legadas.
-- Ausência de ambiente Xano ou de capacidade de runner -> impedir conclusão de Verify dos casos afetados; revisão estática não prova execução no backend.
+- Ausência de ambiente Xano separado -> não permite comprovar runtime, persistência de auditoria ou efeitos operacionais; registrar esses limites sem confundir evidência local com integração.
+- Controle de Aplicativo bloqueia a compilação Reflex -> registrar tentativa e bloqueio como resultado inconclusivo para compilação; não contornar a política nem atribuir a falha a incompatibilidade sem evidência.
 - Spec consolidada não inclui os requisitos arquivados do login Reflex -> manter regressões desse comportamento e registrar a reconciliação documental separadamente, sem substituir contratos silenciosamente.
 
 ## Migration Plan
 
-1. Após Review, preparar ambiente Xano de teste e registrar baseline sem segredos.
-2. Aplicar a verificação comum e integrações mantendo GUIDs, canonical, assinatura e schemas existentes.
-3. Executar a matriz de verificação, testes Python e compilação; comparar efeitos e auditoria.
-4. Atualizar somente documentação de permissões afetada e apresentar evidências para Verify. Não publicar em produção como parte desta Change.
-5. Em falha, restaurar os recursos modificados no ambiente de teste à versão anterior; conservar logs e registros necessários à investigação. Não excluir histórico ou restaurar produção para contornar falhas.
+1. Aplicar a verificação comum e integrações mantendo GUIDs, canonical, assinatura e schemas existentes.
+2. Executar os testes locais disponíveis e registrar testes, inspeção estrutural e validações de sintaxe segundo o alcance de cada evidência.
+3. Registrar a compilação Reflex como bloqueada e não concluída; não alterar versões nem contornar controles de segurança sem decisão específica.
+4. Consolidar a matriz de evidências para Verify, marcando casos de runtime e efeitos não comprovados como não executados. Não publicar em produção nem acessar o Xano remoto como parte desta Change.
