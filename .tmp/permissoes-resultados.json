@@ -1,0 +1,168 @@
+[
+  {
+    "caso": "sem autenticacao /auth/me",
+    "aprovado": true,
+    "status": 401
+  },
+  {
+    "caso": "sem autenticacao /reset/update_password",
+    "aprovado": true,
+    "status": 401
+  },
+  {
+    "caso": "sem autenticacao /message/send_welcome_email",
+    "aprovado": true,
+    "status": 401
+  },
+  {
+    "caso": "sem autenticacao eventos",
+    "aprovado": true,
+    "status": 401
+  },
+  {
+    "caso": "cadastro publico",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "member ativo e promocao manipulada recusada",
+    "aprovado": true,
+    "status": 200,
+    "usuario_teste_id": 6
+  },
+  {
+    "caso": "eventos filtrados por usuario",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "member recusado antes de envio",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "auditoria identifica member sem segredos",
+    "aprovado": true
+  },
+  {
+    "caso": "sem evento de envio",
+    "aprovado": true
+  },
+  {
+    "caso": "member ativo altera senha descartavel",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "login com nova senha",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "senha anterior recusada",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "runner member permite member",
+    "aprovado": false
+  },
+  {
+    "caso": "runner member recusa admin",
+    "aprovado": true
+  },
+  {
+    "caso": "runner recusa papel minimo invalido",
+    "aprovado": true
+  },
+  {
+    "caso": "runner recusa usuario inexistente",
+    "aprovado": true
+  },
+  {
+    "caso": "runner admin permite member",
+    "aprovado": false
+  },
+  {
+    "caso": "runner admin permite admin",
+    "aprovado": false
+  },
+  {
+    "caso": "admin ativo consulta identidade com token anterior",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "admin ativo consulta eventos",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "admin desativado token anterior /auth/me",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "admin desativado token anterior /logs/user/my_events",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "admin desativado token anterior /message/send_welcome_email",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "admin desativado token anterior /reset/update_password",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "runner recusa desativado",
+    "aprovado": true
+  },
+  {
+    "caso": "member desativado token anterior /auth/me",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "member desativado token anterior /logs/user/my_events",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "recusa de senha desativada preserva senha",
+    "aprovado": true,
+    "status": 200
+  },
+  {
+    "caso": "runner recusa papel ausente",
+    "aprovado": true
+  },
+  {
+    "caso": "API recusa papel ausente",
+    "aprovado": true,
+    "status": 403
+  },
+  {
+    "caso": "estado legado sem valor",
+    "aprovado": false
+  },
+  {
+    "caso": "recusas sem evento operacional de envio",
+    "aprovado": true
+  },
+  {
+    "caso": "auditoria de inatividade e papel ausente",
+    "aprovado": true
+  },
+  {
+    "caso": "auditoria minima em todas recusas",
+    "aprovado": true
+  },
+  {
+    "caso": "papeis e estados preexistentes preservados",
+    "aprovado": true
+  }
+]

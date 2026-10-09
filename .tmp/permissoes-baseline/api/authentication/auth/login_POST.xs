@@ -1,0 +1,106 @@
+// Login and retrieve an authentication token
+query "auth/login" verb=POST {
+  api_group = "Authentication"
+
+  input {
+    email email? filters=trim|lower
+    text password?
+  }
+
+  stack {
+    // Get the user record via email
+    db.get user {
+      field_name = "email"
+      field_value = $input.email
+      output = [
+        "id"
+        "created_at"
+        "name"
+        "email"
+        "password"
+        "role"
+        "is_active"
+      ]
+    } as $user
+  
+    conditional {
+      if ($user == null) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
+  
+    // Check to make sure a user with that email exists
+    precondition ($user != null) {
+      error_type = "accessdenied"
+      error = "Invalid Credentials."
+    }
+  
+    conditional {
+      if ($user.is_active == false) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
+  
+    precondition ($user.is_active != false) {
+      error_type = "accessdenied"
+      error = "Invalid Credentials."
+    }
+  
+    // Check that the password matches the hashed password
+    security.check_password {
+      text_password = $input.password
+      hash_password = $user.password
+    } as $pass_result
+  
+    conditional {
+      if ($pass_result == false) {
+        function.run "Quick Start/log_event" {
+          input = {
+            user_id: null
+            action : "login_failed"
+            result : "denied"
+          }
+        } as $event_log
+      }
+    }
+  
+    // Verify that the password check passed
+    precondition ($pass_result) {
+      error_type = "accessdenied"
+      error = "Invalid Credentials."
+    }
+  
+    // Create an authentication token
+    security.create_auth_token {
+      table = "user"
+      extras = {}
+      expiration = 86400
+      id = $user.id
+    } as $authToken
+  
+    // Create an event log for login
+    function.run "Quick Start/log_event" {
+      input = {
+        user_id: $user.id
+        action : "login"
+        result : "success"
+      }
+    } as $event_log
+  }
+
+  response = {authToken: $authToken, user_id: $user.id}
+  tags = ["xano:quick-start"]
+  guid = "_seQLkhTzrAGAfbFTtQCtIVhgp4"
+}

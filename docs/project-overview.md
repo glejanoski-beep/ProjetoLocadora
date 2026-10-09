@@ -116,6 +116,10 @@ A integridade dos dados é especialmente importante nas transições de uma loca
 
 ## 11. Estratégia de desenvolvimento
 
+A política operacional usa os papéis existentes `member/admin`. Contas públicas recebem `member` e acesso automático quando ativas, sem vínculo obrigatório com Funcionário. `member` consulta cadastros e poderá incluir locações e registrar pagamentos/multas conforme as respectivas regras; manutenção de cadastros, gestão de acessos e ajustes financeiros exigem `admin`. A matriz detalhada está em `docs/domain-model.md`; os módulos operacionais ainda dependem de implementação própria.
+
+Toda API protegida deve verificar existência, estado e papel atuais da conta no backend antes dos dados ou efeitos, preservando contas legadas sem estado explícito. Desativação recusa tokens anteriores ainda válidos. Autorização administrativa não dispensa regras de negócio.
+
 O desenvolvimento deve evoluir por fatias funcionais, começando pela fundação de autenticação, usuários e dados essenciais. Em seguida, devem ser implementados o cadastro do acervo, a disponibilidade, o fluxo de locação e devolução, as multas e pagamentos, e por fim os relatórios e melhorias administrativas.
 
 Cada evolução deve definir seus próprios comportamentos, validações, permissões e critérios de aceite. Mudanças que afetem locações, disponibilidade, multas ou pagamentos devem receber atenção especial, pois podem impactar diretamente a operação e os registros financeiros da locadora.

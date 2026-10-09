@@ -1,11 +1,4 @@
 {
   "servers": {
-    "xano": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@xano/developer-mcp"
-      ]
-    }
   }
 }

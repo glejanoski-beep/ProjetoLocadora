@@ -1,0 +1,15 @@
+{
+	"mcpServers": {
+		"xano": {
+			"type": "local",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@xano/developer-mcp"
+			],
+			"tools": [
+				"*"
+			]
+		}
+	}
+}

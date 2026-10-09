@@ -1,8 +1,12 @@
 # Tasks
 
+## Decisão de execução autorizada
+
+Em 2026-10-08, o usuário autorizou implementar primeiro localmente e realizar aplicação e testes no único ambiente Xano disponível, `v1`, workspace `149184`. Essa decisão substitui o isolamento em branch/workspace e a exclusão de publicação no plano original. Preservar recursos e contas existentes, obter cópia dos recursos afetados antes do envio, limitar alterações à change e testar com contas fictícias. Não excluir histórico. A execução deve registrar explicitamente casos não executados.
+
 ## 1. Preparação da verificação
 
-- [ ] 1.1 Preparar branch ou workspace Xano de teste separado de produção, com cópia dos recursos afetados e contas fictícias `admin/member`; verificar identidade do ambiente e registrar baseline sanitizado de login, consulta de identidade e autorização administrativa.
+- [ ] 1.1 Preparar testes no Xano `v1` autorizado, com cópia anterior dos recursos afetados e contas fictícias `admin/member`; verificar identidade do ambiente e registrar baseline sanitizado de login, consulta de identidade e autorização administrativa.
 - [ ] 1.2 Preparar destinatário de e-mail de teste e conta descartável para atualização de senha; verificar que os efeitos ocorrerão somente nesses recursos e registrar explicitamente qualquer pré-requisito indisponível.
 
 ## 2. Verificação reutilizável de acesso

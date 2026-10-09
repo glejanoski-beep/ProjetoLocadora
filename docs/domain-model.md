@@ -391,6 +391,24 @@ São visões consolidadas dos dados operacionais. Relatórios de locações pode
 - Nenhuma correção operacional deve apagar o histórico da operação original.
 - Operações sensíveis devem ser executadas por usuário autorizado e, quando aplicável, registradas em eventos de auditoria.
 
+## Política de acesso operacional
+
+A conta interna é suficiente para acesso; vínculo com Funcionário não é obrigatório. O cadastro público continua atribuindo `member`, com acesso automático quando ativo, sem promover contas ou alterar papéis existentes. O backend consulta o estado e o papel atuais em cada operação protegida, mesmo com token anterior à desativação. Estado legado ausente permanece compatível; conta explicitamente desativada, inexistente ou papel desconhecido é recusado.
+
+| Operação prevista | Papel mínimo |
+|---|---|
+| Consultar clientes, filmes e exemplares | `member` |
+| Criar, alterar ou inativar esses cadastros | `admin` |
+| Incluir locação | `member` |
+| Registrar pagamento e quitação conforme saldo | `member` |
+| Registrar multa conforme política de cálculo | `member` |
+| Estornar, cancelar ou ajustar transação financeira | `admin` |
+| Gerenciar papéis e estado de acesso | `admin` |
+
+A leitura de clientes/filmes, inclusão de locações e registro de pagamentos/multas foram confirmados na definição da change. A separação de consulta/manutenção de exemplares e os ajustes financeiros restritos foram aceitos ao autorizar sua aplicação. A matriz é contrato para módulos futuros, não indicação de implementação. Devoluções, reservas e relatórios exigem definição própria; não há permissão implícita de `member`. `admin` também deve cumprir invariantes, cálculos e preservação do histórico.
+
+As APIs existentes usam `member` como mínimo em `auth/me`, `logs/user/my_events` e `reset/update_password`, e `admin` em `message/send_welcome_email`. A auditoria das recusas contém somente identidade verificada, ação e resultado, sem credenciais ou objetos de usuário.
+
 ## 6. Decisões ainda em aberto
 
 O modelo conceitual não fixa decisões que dependem de regras futuras, incluindo:

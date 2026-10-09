@@ -1,5 +1,9 @@
 # Design
 
+## Alteração autorizada da execução
+
+Em 2026-10-08, o usuário determinou implementação local primeiro e aplicação/testes no único ambiente Xano disponível, `v1`, workspace `149184`. Esta decisão prevalece sobre as referências abaixo a ambiente separado e à exclusão de publicação. Obter cópia anterior dos recursos, preservar contas existentes e usar contas fictícias nos testes. A matriz funcional permanece inalterada; envio deve se limitar aos recursos desta change e casos indisponíveis devem ser registrados como não executados.
+
 ## Context
 
 Ver `proposal.md` para motivação e o delta `specs/acesso-seguro/spec.md` para requisitos. A tabela `user` já possui `role` e `is_active`; o cadastro público atribui `member`. `Quick Start/enforce_role` aceita `user_id/required_role`, usa a hierarquia `admin:2, member:1` e não consulta `is_active`. Só o envio de boas-vindas usa essa função; `auth/me`, eventos pessoais e atualização de senha têm autenticação, mas não a verificação comum de estado e papel. O Reflex guarda o bearer no servidor e consulta `auth/me` ao entrar nas páginas internas.
