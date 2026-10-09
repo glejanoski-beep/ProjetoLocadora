@@ -314,16 +314,16 @@ class State(rx.State):
         auth_data = await login_xano(email, password)
         password = ""
         if not auth_data or not auth_data.get("authToken"):
+            self._clear_session()
             self.is_loading = False
             self.error_message = GENERIC_AUTH_ERROR
-            self._clear_session()
             return
 
         me_data = await get_me_xano(auth_data["authToken"])
         if not me_data or not is_authorized_employee(me_data):
+            self._clear_session()
             self.is_loading = False
             self.error_message = GENERIC_AUTH_ERROR
-            self._clear_session()
             return
 
         self._xano_auth_token = auth_data["authToken"]

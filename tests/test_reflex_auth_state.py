@@ -100,6 +100,33 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state._user_role, role)
                 self.assertEqual(state._user_id, "1")
 
+    async def test_rejected_login_clears_session_and_preserves_generic_error(self):
+        state = State(_reflex_internal_init=True)
+        state._login_email = "invalid@example.test"
+        state._login_password = "invalid-test-password"
+        state._xano_auth_token = "stale-token"
+        state._user_id = "42"
+        state._user_role = "admin"
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.login_xano",
+            new=AsyncMock(return_value=None),
+        ) as login:
+            await state.handle_login()
+
+        login.assert_awaited_once_with(
+            "invalid@example.test",
+            "invalid-test-password",
+        )
+        self.assertEqual(
+            state.error_message,
+            "Credenciais inválidas ou conta sem acesso.",
+        )
+        self.assertFalse(state.is_loading)
+        self.assertFalse(state.is_authenticated)
+        self.assertEqual(state._xano_auth_token, "")
+        self.assertEqual(state._user_id, "")
+
     async def test_session_revalidation_clears_inactive_account(self):
         state = State(_reflex_internal_init=True)
         state._xano_auth_token = "valid-token"

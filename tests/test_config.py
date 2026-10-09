@@ -2,29 +2,69 @@ import os
 import unittest
 from unittest.mock import patch
 
-from ProjetoLocadora.config import get_frontend_base_url, get_xano_api_url
+from ProjetoLocadora.config import (
+    get_frontend_base_url,
+    get_xano_auth_api_url,
+    get_xano_catalog_api_url,
+)
 
 
 class TestConfig(unittest.TestCase):
-    def test_get_xano_api_url_success(self):
-        with patch.dict(os.environ, {"XANO_API_URL": "https://example.com/api/"}):
-            self.assertEqual(get_xano_api_url(), "https://example.com/api")
+    def test_get_xano_auth_api_url_uses_auth_setting(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://auth.example/api/",
+                "XANO_CATALOG_API_URL": "https://catalog.example/api",
+            },
+        ):
+            self.assertEqual(
+                get_xano_auth_api_url(),
+                "https://auth.example/api",
+            )
 
-    def test_get_xano_api_url_fallback(self):
-        with patch.dict(os.environ, {"XANO_API_URL": "", "XANO_API_BASE_URL": "https://fallback.com/api"}):
-            self.assertEqual(get_xano_api_url(), "https://fallback.com/api")
+    def test_get_xano_catalog_api_url_uses_catalog_setting(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://auth.example/api",
+                "XANO_CATALOG_API_URL": "https://catalog.example/api/",
+            },
+        ):
+            self.assertEqual(
+                get_xano_catalog_api_url(),
+                "https://catalog.example/api",
+            )
 
-    def test_get_xano_api_url_missing_raises_error(self):
+    def test_get_xano_auth_api_url_missing_raises_error(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
-                get_xano_api_url()
-            self.assertIn("XANO_API_URL não configurada", str(ctx.exception))
+                get_xano_auth_api_url()
+            self.assertIn("XANO_AUTH_API_URL não configurada", str(ctx.exception))
 
-    def test_get_xano_api_url_whitespace_raises_error(self):
-        with patch.dict(os.environ, {"XANO_API_URL": "   ", "XANO_API_BASE_URL": ""}):
+    def test_get_xano_catalog_api_url_missing_raises_error(self):
+        with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
-                get_xano_api_url()
-            self.assertIn("XANO_API_URL não configurada", str(ctx.exception))
+                get_xano_catalog_api_url()
+            self.assertIn("XANO_CATALOG_API_URL não configurada", str(ctx.exception))
+
+    def test_xano_auth_and_catalog_settings_are_independent(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://auth.example/api",
+                "XANO_CATALOG_API_URL": "",
+            },
+        ):
+            self.assertEqual(
+                get_xano_auth_api_url(),
+                "https://auth.example/api",
+            )
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "XANO_CATALOG_API_URL não configurada",
+            ):
+                get_xano_catalog_api_url()
 
     def test_get_frontend_base_url_defaults_to_localhost(self):
         with patch.dict(os.environ, {}, clear=True):

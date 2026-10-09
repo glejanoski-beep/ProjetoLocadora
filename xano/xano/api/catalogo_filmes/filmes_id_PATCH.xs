@@ -37,7 +37,7 @@ query "catalogo-filmes/filmes/{id}" verb=PATCH {
 
     precondition (
       $input.ano_lancamento >= 1888
-      && $input.ano_lancamento <= ("now"|to_timestamp|timestamp_year)
+      && $input.ano_lancamento <= (now|format_timestamp:"Y":"UTC"|to_int)
     ) {
       error_type = "inputerror"
       error = "Ano de lançamento fora do intervalo permitido."

@@ -65,6 +65,22 @@ WELCOME_EMAIL_PATH = (
     / "message"
     / "send_welcome_email_POST.xs"
 )
+FILM_CREATE_PATH = (
+    Path(__file__).parents[1]
+    / "xano"
+    / "xano"
+    / "api"
+    / "catalogo_filmes"
+    / "filmes_POST.xs"
+)
+FILM_UPDATE_PATH = (
+    Path(__file__).parents[1]
+    / "xano"
+    / "xano"
+    / "api"
+    / "catalogo_filmes"
+    / "filmes_id_PATCH.xs"
+)
 
 
 class TestEnforceRoleContract(unittest.TestCase):
@@ -92,6 +108,16 @@ class TestEnforceRoleContract(unittest.TestCase):
             )
         )
         self.assertIn('guid = "7xVXPTnU16TJsslvt3O4zfBuAag"', self.source)
+
+    def test_film_year_validation_uses_supported_timestamp_filters(self):
+        expected_current_year = (
+            '(now|format_timestamp:"Y":"UTC"|to_int)'
+        )
+        for endpoint_path in (FILM_CREATE_PATH, FILM_UPDATE_PATH):
+            with self.subTest(endpoint=endpoint_path.name):
+                endpoint_source = endpoint_path.read_text(encoding="utf-8")
+                self.assertIn(expected_current_year, endpoint_source)
+                self.assertNotIn("timestamp_year", endpoint_source)
 
     def test_reads_current_role_and_active_state(self):
         self.assertRegex(
