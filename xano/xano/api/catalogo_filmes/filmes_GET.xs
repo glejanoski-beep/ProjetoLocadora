@@ -28,4 +28,5 @@ query "catalogo-filmes/filmes" verb=GET {
 
   response = $films
   tags = []
+  guid = "w0WwRvpzUEfYhLA1OKy2lAjFRd8"
 }

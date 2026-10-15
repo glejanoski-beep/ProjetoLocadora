@@ -21,4 +21,5 @@ table film {
     {type: "btree", field: [{name: "titulo", op: "asc"}]}
     {type: "btree", field: [{name: "genero", op: "asc"}]}
   ]
+  guid = "kbdt1T_IKCA3eZP9v3jlUSzhsuk"
 }

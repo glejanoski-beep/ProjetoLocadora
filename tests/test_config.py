@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from ProjetoLocadora.config import (
+    _load_project_environment,
     get_frontend_base_url,
     get_xano_auth_api_url,
     get_xano_catalog_api_url,
@@ -35,6 +38,37 @@ class TestConfig(unittest.TestCase):
                 get_xano_catalog_api_url(),
                 "https://catalog.example/api",
             )
+
+    def test_project_dotenv_overrides_stale_inherited_catalog_url(self):
+        with TemporaryDirectory() as temporary_directory:
+            dotenv_path = Path(temporary_directory) / ".env"
+            dotenv_path.write_text(
+                "XANO_CATALOG_API_URL=https://catalog.example/api:new\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"XANO_CATALOG_API_URL": "https://auth.example/api:old"},
+            ):
+                _load_project_environment(dotenv_path)
+                self.assertEqual(
+                    os.environ["XANO_CATALOG_API_URL"],
+                    "https://catalog.example/api:new",
+                )
+
+    def test_catalog_api_rejects_authentication_group_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://xano.example/api:shared",
+                "XANO_CATALOG_API_URL": "https://xano.example/api:shared",
+            },
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "grupo Catálogo de Filmes",
+            ):
+                get_xano_catalog_api_url()
 
     def test_get_xano_auth_api_url_missing_raises_error(self):
         with patch.dict(os.environ, {}, clear=True):

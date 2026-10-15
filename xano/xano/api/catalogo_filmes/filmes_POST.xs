@@ -78,4 +78,5 @@ query "catalogo-filmes/filmes" verb=POST {
 
   response = {film: $film, audit_succeeded: $audit_succeeded}
   tags = []
+  guid = "XrHfYyjbsnDyxEIb9Y2KdADSsbw"
 }

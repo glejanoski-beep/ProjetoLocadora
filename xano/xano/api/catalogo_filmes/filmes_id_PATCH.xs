@@ -94,4 +94,5 @@ query "catalogo-filmes/filmes/{id}" verb=PATCH {
 
   response = {film: $film, audit_succeeded: $audit_succeeded}
   tags = []
+  guid = "ZNvrrI-sicfQ4GXnQ5k1ts5zSGE"
 }
