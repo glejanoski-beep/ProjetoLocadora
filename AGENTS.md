@@ -93,3 +93,8 @@ Estas regras complementam as instruções gerenciadas do Reflex e devem ser cons
 
 - Para alterações em Xano/XanoScript e no projeto Python auxiliar, consultar `.vscode/.github/copilot-instructions.md`.
 - Essas instruções especializadas complementam este arquivo e não podem contrariar suas regras gerais.
+
+### Branch Xano
+
+- Implementar, validar e publicar changes e applies diretamente no branch Xano `v1`.
+- Não criar branch Xano isolado para essas operações, salvo se o usuário alterar esta decisão explicitamente.

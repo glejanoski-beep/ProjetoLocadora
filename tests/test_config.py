@@ -9,6 +9,7 @@ from ProjetoLocadora.config import (
     get_frontend_base_url,
     get_xano_auth_api_url,
     get_xano_catalog_api_url,
+    get_xano_customer_api_url,
 )
 
 
@@ -103,6 +104,49 @@ class TestConfig(unittest.TestCase):
     def test_get_frontend_base_url_defaults_to_localhost(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(get_frontend_base_url(), "http://localhost:3000")
+
+    def test_get_xano_customer_api_url_uses_independent_setting(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://xano.example/api:auth",
+                "XANO_CATALOG_API_URL": "https://xano.example/api:catalog",
+                "XANO_CUSTOMER_API_URL": "https://xano.example/api:customers/",
+            },
+        ):
+            self.assertEqual(
+                get_xano_customer_api_url(),
+                "https://xano.example/api:customers",
+            )
+
+    def test_customer_api_url_is_required(self):
+        with patch.dict(
+            os.environ,
+            {
+                "XANO_AUTH_API_URL": "https://xano.example/api:auth",
+                "XANO_CATALOG_API_URL": "https://xano.example/api:catalog",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "XANO_CUSTOMER_API_URL não configurada"):
+                get_xano_customer_api_url()
+
+    def test_customer_api_rejects_auth_or_catalog_group_url(self):
+        base = {
+            "XANO_AUTH_API_URL": "https://xano.example/api:auth",
+            "XANO_CATALOG_API_URL": "https://xano.example/api:catalog",
+        }
+        for duplicate, group in (
+            (base["XANO_AUTH_API_URL"], "Authentication"),
+            (base["XANO_CATALOG_API_URL"], "Catálogo de Filmes"),
+        ):
+            with self.subTest(group=group), patch.dict(
+                os.environ,
+                {**base, "XANO_CUSTOMER_API_URL": duplicate},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, f"grupo {group}"):
+                    get_xano_customer_api_url()
 
     def test_get_frontend_base_url_uses_environment(self):
         with patch.dict(os.environ, {"FRONTEND_BASE_URL": "https://app.example/"}):

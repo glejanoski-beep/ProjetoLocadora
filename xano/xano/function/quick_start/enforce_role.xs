@@ -18,7 +18,7 @@ function "Quick Start/enforce_role" {
     db.get user {
       field_name = "id"
       field_value = $input.user_id
-      output = ["id", "role", "is_active"]
+      output = ["role", "is_active"]
     } as $user
   
     // Ensure the user exists
@@ -32,53 +32,34 @@ function "Quick Start/enforce_role" {
       if ($user.is_active == false) {
         function.run "Quick Start/log_event" {
           input = {
-            user_id: $user.id
+            user_id: $input.user_id
             action : "authorization_denied"
             result : "denied_inactive"
           }
         } as $event_log
 
-        throw {
-          name = "accessdenied"
-          value = "User account is inactive."
+        precondition (false) {
+          error_type = "accessdenied"
+          error = "User account is inactive."
         }
       }
     }
   
     conditional {
-      if ($user.is_active == false) {
-        function.run "Quick Start/log_event" {
-          input = {
-            user_id: $user.id
-            action : "authorization_denied"
-            result : "denied_inactive"
-          }
-        } as $event_log
-
-      }
-    }
-
-    precondition ($user.is_active != false) {
-      error_type = "accessdenied"
-      error = "Access denied."
-    }
-
-    conditional {
       if ($user.role != "admin" && $user.role != "member") {
         function.run "Quick Start/log_event" {
           input = {
-            user_id: $user.id
+            user_id: $input.user_id
             action : "authorization_denied"
             result : "denied_unknown_role"
           }
         } as $event_log
 
+        precondition (false) {
+          error_type = "accessdenied"
+          error = "User has an unrecognized role."
+        }
       }
-    }
-
-    precondition ($user.role == "admin" || $user.role == "member") {
-      error_type = "accessdenied"
-      error = "Access denied."
     }
 
     precondition ($input.required_role == "admin" || $input.required_role == "member") {
@@ -101,15 +82,15 @@ function "Quick Start/enforce_role" {
       if ($user_role_level == null || $user_role_level <= 0) {
         function.run "Quick Start/log_event" {
           input = {
-            user_id: $user.id
+            user_id: $input.user_id
             action : "authorization_denied"
             result : "denied_role_unrecognized"
           }
         } as $event_log
 
-        throw {
-          name = "accessdenied"
-          value = "User has an unrecognized role."
+        precondition (false) {
+          error_type = "accessdenied"
+          error = "User has an unrecognized role."
         }
       }
     }
@@ -130,18 +111,17 @@ function "Quick Start/enforce_role" {
       if ($user_role_level < $required_role_level) {
         function.run "Quick Start/log_event" {
           input = {
-            user_id: $user.id
+            user_id: $input.user_id
             action : "authorization_denied"
             result : "denied_role:" ~ $input.required_role
           }
         } as $event_log
 
+        precondition (false) {
+          error_type = "accessdenied"
+          error = "User does not have the required role."
+        }
       }
-    }
-
-    precondition ($user_role_level >= $required_role_level) {
-      error_type = "accessdenied"
-      error = "Access denied."
     }
   }
 

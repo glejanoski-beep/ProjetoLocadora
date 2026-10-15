@@ -10,19 +10,31 @@ from ProjetoLocadora.catalogo_filmes import (
     centavos_para_reais,
     validar_filme,
 )
+from ProjetoLocadora.clientes import (
+    ClienteDetalhe,
+    ClienteResumo,
+    validar_bloqueio_manual,
+    validar_cliente,
+)
 from ProjetoLocadora.xano_client import (
     GENERIC_AUTH_ERROR,
     XanoCatalogError,
+    XanoCustomerError,
     consume_password_reset_token,
     create_film_xano,
+    create_customer_xano,
+    get_customer_xano,
     get_film_xano,
     get_me_xano,
     is_authorized_employee,
     list_films_xano,
+    list_customers_xano,
     login_xano,
     request_password_reset,
     update_film_xano,
+    update_customer_xano,
     update_password_xano,
+    set_customer_manual_block_xano,
 )
 
 
@@ -62,10 +74,49 @@ class State(rx.State):
     form_status: str = "active"
     editing_film_id: int = 0
     editing_film: bool = False
+    customers: list[ClienteResumo] = []
+    customers_loading: bool = False
+    customers_error: str = ""
+    customers_success: str = ""
+    customer_name_search: str = ""
+    customer_cpf_search: str = ""
+    customers_page: int = 1
+    customers_per_page: int = 20
+    customers_total: int = 0
+    customer_form_loading: bool = False
+    customer_form_error: str = ""
+    customer_form_name: str = ""
+    customer_form_cpf: str = ""
+    customer_form_email: str = ""
+    customer_form_phone: str = ""
+    customer_form_status: str = "active"
+    editing_customer_id: int = 0
+    editing_customer: bool = False
+    customer_detail: ClienteDetalhe | None = None
+    customer_detail_loading: bool = False
+    customer_detail_error: str = ""
+    customer_block_reason: str = ""
+    customer_block_loading: bool = False
 
     @rx.var
     def has_films(self) -> bool:
         return bool(self.films)
+
+    @rx.var
+    def has_customers(self) -> bool:
+        return bool(self.customers)
+
+    @rx.var
+    def customers_has_previous_page(self) -> bool:
+        return self.customers_page > 1
+
+    @rx.var
+    def customers_has_next_page(self) -> bool:
+        return self.customers_page * self.customers_per_page < self.customers_total
+
+    @rx.var
+    def customer_detail_loaded(self) -> bool:
+        return self.customer_detail is not None
 
     @rx.var
     def is_authenticated(self) -> bool:
@@ -130,6 +181,30 @@ class State(rx.State):
     def capture_film_status(self, value: str) -> None:
         self.form_status = value
 
+    def capture_customer_name_search(self, value: str) -> None:
+        self.customer_name_search = value
+
+    def capture_customer_cpf_search(self, value: str) -> None:
+        self.customer_cpf_search = value
+
+    def capture_customer_name(self, value: str) -> None:
+        self.customer_form_name = value
+
+    def capture_customer_cpf(self, value: str) -> None:
+        self.customer_form_cpf = value
+
+    def capture_customer_email(self, value: str) -> None:
+        self.customer_form_email = value
+
+    def capture_customer_phone(self, value: str) -> None:
+        self.customer_form_phone = value
+
+    def capture_customer_status(self, value: str) -> None:
+        self.customer_form_status = value
+
+    def capture_customer_block_reason(self, value: str) -> None:
+        self.customer_block_reason = value
+
     def _clear_session(self) -> None:
         self._login_email = ""
         self._login_password = ""
@@ -155,6 +230,192 @@ class State(rx.State):
         self.form_rent_price = ""
         self.form_status = "active"
         self.editing_film_id = 0
+
+    def _clear_customer_form(self) -> None:
+        self.customer_form_error = ""
+        self.customer_form_name = ""
+        self.customer_form_cpf = ""
+        self.customer_form_email = ""
+        self.customer_form_phone = ""
+        self.customer_form_status = "active"
+        self.editing_customer_id = 0
+
+    def _require_customer_admin(self):
+        if not self._xano_auth_token:
+            self._clear_session()
+            return rx.redirect("/login")
+        if self._user_role != "admin":
+            return rx.redirect("/clientes")
+        return None
+
+    async def load_customers(self):
+        if not self._xano_auth_token:
+            self._clear_session()
+            return rx.redirect("/login")
+        self.customers_loading = True
+        self.customers_error = ""
+        try:
+            result = await list_customers_xano(
+                self._xano_auth_token,
+                nome=self.customer_name_search,
+                cpf=self.customer_cpf_search,
+                page=self.customers_page,
+                per_page=self.customers_per_page,
+            )
+        except XanoCustomerError as err:
+            self.customers_error = err.user_message
+            self.customers = []
+            self.customers_total = 0
+        else:
+            self.customers = result["items"]
+            self.customers_page = result["page"]
+            self.customers_per_page = result["per_page"]
+            self.customers_total = result["total"]
+        finally:
+            self.customers_loading = False
+
+    async def apply_customer_filters(self):
+        self.customers_page = 1
+        self.customers_success = ""
+        return await self.load_customers()
+
+    async def previous_customers_page(self):
+        if self.customers_page > 1:
+            self.customers_page -= 1
+            return await self.load_customers()
+
+    async def next_customers_page(self):
+        if self.customers_page * self.customers_per_page < self.customers_total:
+            self.customers_page += 1
+            return await self.load_customers()
+
+    async def load_new_customer(self):
+        redirect = self._require_customer_admin()
+        if redirect:
+            return redirect
+        self._clear_customer_form()
+        self.editing_customer = False
+        self.customers_success = ""
+
+    def _route_customer_id(self) -> int:
+        value = self.router.page.params.get("customer_id", "")
+        return int(value) if value.isdecimal() else 0
+
+    async def load_customer_detail(self):
+        if not self._xano_auth_token:
+            self._clear_session()
+            return rx.redirect("/login")
+        customer_id = self._route_customer_id()
+        self.customer_detail = None
+        self.customer_detail_error = ""
+        self.customer_block_reason = ""
+        if not customer_id:
+            self.customer_detail_error = "Identificador do cliente inválido."
+            return
+        self.customer_detail_loading = True
+        try:
+            self.customer_detail = await get_customer_xano(
+                self._xano_auth_token, customer_id
+            )
+        except XanoCustomerError as err:
+            self.customer_detail_error = err.user_message
+        finally:
+            self.customer_detail_loading = False
+
+    async def load_customer_for_edit(self):
+        redirect = self._require_customer_admin()
+        if redirect:
+            return redirect
+        self._clear_customer_form()
+        self.editing_customer = True
+        self.customers_success = ""
+        customer_id = self._route_customer_id()
+        if not customer_id:
+            self.customer_form_error = "Identificador do cliente inválido."
+            return
+        self.customer_form_loading = True
+        try:
+            customer = await get_customer_xano(self._xano_auth_token, customer_id)
+        except XanoCustomerError as err:
+            self.customer_form_error = err.user_message
+        else:
+            self.editing_customer_id = customer["id"]
+            self.customer_form_name = customer["nome"]
+            self.customer_form_cpf = customer["cpf"]
+            self.customer_form_email = customer["email"] or ""
+            self.customer_form_phone = customer["telefone"] or ""
+            self.customer_form_status = customer["status"]
+        finally:
+            self.customer_form_loading = False
+
+    async def submit_customer(self):
+        redirect = self._require_customer_admin()
+        if redirect:
+            return redirect
+        self.customer_form_error = ""
+        errors, payload = validar_cliente(
+            nome=self.customer_form_name,
+            cpf=self.customer_form_cpf,
+            email=self.customer_form_email,
+            telefone=self.customer_form_phone,
+            status=self.customer_form_status,
+        )
+        if errors:
+            self.customer_form_error = next(iter(errors.values()))
+            return
+        self.customer_form_loading = True
+        try:
+            if self.editing_customer:
+                await update_customer_xano(
+                    self._xano_auth_token, self.editing_customer_id, payload
+                )
+                self.customers_success = "Cliente atualizado com sucesso."
+            else:
+                payload.pop("status")
+                await create_customer_xano(self._xano_auth_token, payload)
+                self.customers_success = "Cliente cadastrado com sucesso."
+        except XanoCustomerError as err:
+            self.customer_form_error = err.user_message
+        else:
+            self._clear_customer_form()
+            return rx.redirect("/clientes")
+        finally:
+            self.customer_form_loading = False
+
+    async def toggle_customer_manual_block(self):
+        redirect = self._require_customer_admin()
+        if redirect:
+            return redirect
+        if self.customer_detail is None:
+            self.customer_detail_error = "Cliente não carregado."
+            return
+        bloqueado = not self.customer_detail["bloqueio_manual_ativo"]
+        errors, payload = validar_bloqueio_manual(
+            bloqueado=bloqueado, motivo=self.customer_block_reason
+        )
+        if errors:
+            self.customer_detail_error = next(iter(errors.values()))
+            return
+        self.customer_block_loading = True
+        self.customer_detail_error = ""
+        try:
+            self.customer_detail = await set_customer_manual_block_xano(
+                self._xano_auth_token,
+                self.customer_detail["id"],
+                bloqueado=bool(payload["bloqueado"]),
+                motivo=payload["motivo"] if isinstance(payload["motivo"], str) else None,
+            )
+        except XanoCustomerError as err:
+            self.customer_detail_error = err.user_message
+        else:
+            self.customer_block_reason = ""
+            self.customers_success = (
+                "Bloqueio manual aplicado com sucesso."
+                if bloqueado
+                else "Bloqueio manual removido com sucesso."
+            )
+        finally:
+            self.customer_block_loading = False
 
     def _require_catalog_admin(self):
         if not self._xano_auth_token:
@@ -530,9 +791,319 @@ def render_dashboard() -> rx.Component:
                 width="100%",
             ),
             rx.link("Gerenciar catálogo de filmes", href="/filmes"),
+            rx.link("Gerenciar clientes", href="/clientes"),
             spacing="5",
             min_height="85vh",
         ),
+    )
+
+
+def render_customer_card(customer: ClienteResumo) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            rx.vstack(
+                rx.heading(customer["nome"], size="5"),
+                rx.text(customer["cpf_mascarado"], color="gray"),
+                rx.text(
+                    rx.cond(customer["status"] == "active", "Ativo", "Inativo"),
+                    " · ",
+                    rx.cond(
+                        customer["bloqueio_manual_ativo"],
+                        "Bloqueio manual ativo",
+                        "Sem bloqueio manual",
+                    ),
+                ),
+                spacing="1",
+                align="start",
+            ),
+            rx.link("Consultar", href=f"/clientes/{customer['id']}"),
+            width="100%",
+            justify="between",
+            align="center",
+        ),
+        padding="1rem",
+        border="1px solid #e5e7eb",
+        border_radius="12px",
+        width="100%",
+    )
+
+
+def render_customers_page() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.hstack(
+                rx.heading("Clientes", size="8"),
+                rx.cond(
+                    State.user_role == "admin",
+                    rx.link("Cadastrar cliente", href="/clientes/novo"),
+                ),
+                width="100%",
+                justify="between",
+                align="center",
+            ),
+            rx.link("Voltar ao backoffice", href="/backoffice"),
+            rx.cond(
+                State.customers_success != "",
+                rx.callout(State.customers_success, color_scheme="green", role="status"),
+            ),
+            rx.hstack(
+                rx.input(
+                    placeholder="Buscar por nome",
+                    value=State.customer_name_search,
+                    on_change=State.capture_customer_name_search,
+                    aria_label="Buscar cliente por nome",
+                ),
+                rx.input(
+                    placeholder="CPF completo",
+                    value=State.customer_cpf_search,
+                    on_change=State.capture_customer_cpf_search,
+                    aria_label="Buscar cliente por CPF completo",
+                ),
+                rx.button("Buscar", on_click=State.apply_customer_filters),
+                width="100%",
+            ),
+            rx.cond(
+                State.customers_error != "",
+                rx.callout(State.customers_error, color_scheme="red", role="alert"),
+            ),
+            rx.cond(
+                State.customers_loading,
+                rx.spinner(),
+                rx.cond(
+                    State.customers_error != "",
+                    rx.fragment(),
+                    rx.cond(
+                        State.has_customers,
+                        rx.vstack(
+                            rx.foreach(State.customers, render_customer_card),
+                            width="100%",
+                            align="stretch",
+                        ),
+                        rx.text("Nenhum cliente encontrado.", color="gray"),
+                    ),
+                ),
+            ),
+            rx.hstack(
+                rx.button(
+                    "Anterior",
+                    on_click=State.previous_customers_page,
+                    disabled=~State.customers_has_previous_page,
+                    variant="outline",
+                ),
+                rx.text("Página ", State.customers_page, " · ", State.customers_total, " cliente(s)"),
+                rx.button(
+                    "Próxima",
+                    on_click=State.next_customers_page,
+                    disabled=~State.customers_has_next_page,
+                    variant="outline",
+                ),
+                width="100%",
+                justify="between",
+                align="center",
+            ),
+            spacing="4",
+            width="100%",
+            align="stretch",
+        ),
+        max_width="60rem",
+        padding_y="2rem",
+    )
+
+
+def render_customer_form() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.heading(
+                rx.cond(State.editing_customer, "Editar cliente", "Cadastrar cliente"),
+                size="8",
+            ),
+            rx.link("Voltar aos clientes", href="/clientes"),
+            rx.cond(
+                State.customer_form_error != "",
+                rx.callout(State.customer_form_error, color_scheme="red", role="alert"),
+            ),
+            rx.input(
+                placeholder="Nome completo",
+                value=State.customer_form_name,
+                on_change=State.capture_customer_name,
+                max_length=200,
+                required=True,
+                aria_label="Nome completo do cliente",
+            ),
+            rx.input(
+                placeholder="CPF",
+                value=State.customer_form_cpf,
+                on_change=State.capture_customer_cpf,
+                required=True,
+                aria_label="CPF do cliente",
+            ),
+            rx.input(
+                placeholder="E-mail",
+                type="email",
+                value=State.customer_form_email,
+                on_change=State.capture_customer_email,
+                max_length=254,
+                aria_label="E-mail do cliente",
+            ),
+            rx.input(
+                placeholder="Telefone",
+                value=State.customer_form_phone,
+                on_change=State.capture_customer_phone,
+                aria_label="Telefone do cliente",
+            ),
+            rx.text("Informe ao menos um contato: e-mail ou telefone.", color="gray", size="2"),
+            rx.cond(
+                State.editing_customer,
+                rx.select(
+                    ["active", "inactive"],
+                    value=State.customer_form_status,
+                    on_change=State.capture_customer_status,
+                    required=True,
+                    aria_label="Situação cadastral do cliente",
+                ),
+            ),
+            rx.button(
+                "Salvar cliente",
+                on_click=State.submit_customer,
+                loading=State.customer_form_loading,
+                disabled=State.editing_customer & (State.editing_customer_id == 0),
+                width="100%",
+            ),
+            spacing="4",
+            align="stretch",
+            width="100%",
+        ),
+        max_width="36rem",
+        padding_y="2rem",
+    )
+
+
+def render_customer_detail() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.link("Voltar aos clientes", href="/clientes"),
+            rx.cond(
+                State.customer_detail_error != "",
+                rx.callout(State.customer_detail_error, color_scheme="red", role="alert"),
+            ),
+            rx.cond(
+                State.customers_success != "",
+                rx.callout(State.customers_success, color_scheme="green", role="status"),
+            ),
+            rx.cond(
+                State.customer_detail_loading,
+                rx.spinner(),
+                rx.cond(
+                    State.customer_detail_loaded,
+                    rx.vstack(
+                        rx.hstack(
+                            rx.heading(State.customer_detail["nome"], size="8"),
+                            rx.cond(
+                                State.user_role == "admin",
+                                rx.link(
+                                    "Editar cadastro",
+                                    href=f"/clientes/{State.customer_detail['id']}/editar",
+                                ),
+                            ),
+                            width="100%",
+                            justify="between",
+                            align="center",
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.text("CPF: ", State.customer_detail["cpf"]),
+                                rx.text("E-mail: ", State.customer_detail["email"]),
+                                rx.text("Telefone: ", State.customer_detail["telefone"]),
+                                rx.text(
+                                    "Situação: ",
+                                    rx.cond(State.customer_detail["status"] == "active", "Ativo", "Inativo"),
+                                ),
+                                rx.text(
+                                    "Bloqueio manual: ",
+                                    rx.cond(
+                                        State.customer_detail["bloqueio_manual_ativo"],
+                                        "Ativo",
+                                        "Não aplicado",
+                                    ),
+                                ),
+                                rx.cond(
+                                    State.customer_detail["bloqueio_manual_ativo"],
+                                    rx.text("Motivo: ", State.customer_detail["motivo_bloqueio_manual"]),
+                                ),
+                                align="start",
+                                spacing="2",
+                            ),
+                            padding="1.5rem",
+                            border="1px solid #e5e7eb",
+                            border_radius="12px",
+                            width="100%",
+                        ),
+                        rx.cond(
+                            State.user_role == "admin",
+                            rx.box(
+                                rx.vstack(
+                                    rx.heading("Controle de bloqueio manual", size="5"),
+                                    rx.cond(
+                                        ~State.customer_detail["bloqueio_manual_ativo"],
+                                        rx.input(
+                                            placeholder="Motivo obrigatório",
+                                            value=State.customer_block_reason,
+                                            on_change=State.capture_customer_block_reason,
+                                            max_length=500,
+                                            aria_label="Motivo do bloqueio manual",
+                                        ),
+                                    ),
+                                    rx.button(
+                                        rx.cond(
+                                            State.customer_detail["bloqueio_manual_ativo"],
+                                            "Remover bloqueio manual",
+                                            "Aplicar bloqueio manual",
+                                        ),
+                                        on_click=State.toggle_customer_manual_block,
+                                        loading=State.customer_block_loading,
+                                        color_scheme=rx.cond(
+                                            State.customer_detail["bloqueio_manual_ativo"],
+                                            "green",
+                                            "red",
+                                        ),
+                                    ),
+                                    align="stretch",
+                                    spacing="3",
+                                ),
+                                padding="1.5rem",
+                                border="1px solid #e5e7eb",
+                                border_radius="12px",
+                                width="100%",
+                            ),
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.heading("Histórico e pendências", size="5"),
+                                rx.text(
+                                    "Aguardando implementação das capacidades de locações, multas e pagamentos. Nenhum saldo ou histórico financeiro é apresentado nesta versão.",
+                                    color="gray",
+                                ),
+                                align="start",
+                                spacing="2",
+                            ),
+                            padding="1.5rem",
+                            border="1px solid #e5e7eb",
+                            border_radius="12px",
+                            width="100%",
+                        ),
+                        spacing="4",
+                        width="100%",
+                        align="stretch",
+                    ),
+                    rx.fragment(),
+                ),
+            ),
+            spacing="4",
+            width="100%",
+            align="stretch",
+        ),
+        max_width="60rem",
+        padding_y="2rem",
     )
 
 
@@ -713,6 +1284,26 @@ def render_film_form() -> rx.Component:
         max_width="36rem",
         padding_y="2rem",
     )
+
+
+@rx.page(route="/clientes", on_load=State.load_customers)
+def customers_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_customers_page(), rx.fragment())
+
+
+@rx.page(route="/clientes/novo", on_load=State.load_new_customer)
+def new_customer_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_customer_form(), rx.fragment())
+
+
+@rx.page(route="/clientes/[customer_id]", on_load=State.load_customer_detail)
+def customer_detail_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_customer_detail(), rx.fragment())
+
+
+@rx.page(route="/clientes/[customer_id]/editar", on_load=State.load_customer_for_edit)
+def edit_customer_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_customer_form(), rx.fragment())
 
 
 @rx.page(route="/filmes", on_load=State.load_films)

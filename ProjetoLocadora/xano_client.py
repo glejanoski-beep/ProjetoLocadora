@@ -10,9 +10,11 @@ from urllib.parse import quote
 import httpx
 
 from ProjetoLocadora.catalogo_filmes import Filme
+from ProjetoLocadora.clientes import ClienteDetalhe, ClienteResumo, PaginaClientes
 from ProjetoLocadora.config import (
     get_xano_auth_api_url,
     get_xano_catalog_api_url,
+    get_xano_customer_api_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,18 @@ class XanoCatalogError(Exception):
 
 class XanoAuditError(XanoCatalogError):
     """O Xano persistiu o filme, mas não confirmou o evento de auditoria."""
+
+
+class XanoCustomerError(Exception):
+    """Falha explícita em uma operação de clientes no Xano."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.user_message = message
+
+
+class XanoCustomerAuditError(XanoCustomerError):
+    """O Xano persistiu o cliente, mas não confirmou a auditoria."""
 
 
 def _login_response_data(status_code: int, body: bytes) -> Optional[Dict[str, Any]]:
@@ -131,7 +145,7 @@ def _catalog_endpoint(path: str) -> str:
     return f"{base_url}/catalogo-filmes/filmes{path}"
 
 
-def _catalog_headers(auth_token: str) -> dict[str, str]:
+def _authenticated_headers(auth_token: str) -> dict[str, str]:
     if not auth_token:
         raise XanoCatalogError("Sua sessão expirou. Entre novamente.")
     return {"Authorization": f"Bearer {auth_token}"}
@@ -147,16 +161,15 @@ def _curl_config_value(value: str) -> str:
     return f'"{escaped}"'
 
 
-async def _catalog_request(
+async def _authenticated_request(
     method: str,
-    path: str,
+    url: str,
     auth_token: str,
     *,
     params: Optional[dict[str, str]] = None,
     json_body: Optional[dict[str, Any]] = None,
 ) -> httpx.Response:
-    url = _catalog_endpoint(path)
-    headers = _catalog_headers(auth_token)
+    headers = _authenticated_headers(auth_token)
     if params:
         url = str(httpx.URL(url, params=params))
 
@@ -171,7 +184,7 @@ async def _catalog_request(
 
     curl_path = shutil.which("curl.exe")
     if not curl_path:
-        raise httpx.ConnectError("curl.exe is unavailable for catalog transport.")
+        raise httpx.ConnectError("curl.exe is unavailable for authenticated transport.")
 
     config_lines = [
         f"url = {_curl_config_value(url)}",
@@ -216,29 +229,29 @@ async def _catalog_request(
         )
     except subprocess.TimeoutExpired as err:
         raise httpx.TimeoutException(
-            "Catalog request exceeded its transport timeout.",
+            "Authenticated request exceeded its transport timeout.",
             request=request,
         ) from err
     except OSError as err:
         raise httpx.ConnectError(
-            "Could not start the native Windows catalog transport.",
+            "Could not start the native Windows authenticated transport.",
             request=request,
         ) from err
 
     body, separator, metadata = result.stdout.rpartition(b"\n__XANO_META__")
     if result.returncode != 0 or not separator:
         logger.warning(
-            "Transporte nativo do catálogo falhou (código curl %s)",
+            "Transporte nativo autenticado falhou (código curl %s)",
             result.returncode,
         )
         raise httpx.ConnectError(
-            "Native Windows catalog transport failed.",
+            "Native Windows authenticated transport failed.",
             request=request,
         )
     status_text, request_metadata = metadata.split(b"__XANO_REQUEST_ID__", 1)
     if len(status_text) != 3 or not status_text.isdigit():
         raise httpx.ProtocolError(
-            "Native Windows catalog transport returned an invalid status.",
+            "Native Windows authenticated transport returned an invalid status.",
             request=request,
         )
 
@@ -250,7 +263,7 @@ async def _catalog_request(
         request_id, found, request_metadata = request_metadata.partition(marker)
         if not found:
             raise httpx.ProtocolError(
-                "Native Windows catalog transport returned incomplete metadata.",
+                "Native Windows authenticated transport returned incomplete metadata.",
                 request=request,
             )
         value = request_id.decode("ascii", errors="ignore").strip()
@@ -267,6 +280,53 @@ async def _catalog_request(
         headers=response_headers,
         request=request,
     )
+
+
+async def _catalog_request(
+    method: str,
+    path: str,
+    auth_token: str,
+    *,
+    params: Optional[dict[str, str]] = None,
+    json_body: Optional[dict[str, Any]] = None,
+) -> httpx.Response:
+    return await _authenticated_request(
+        method,
+        _catalog_endpoint(path),
+        auth_token,
+        params=params,
+        json_body=json_body,
+    )
+
+
+def _customer_endpoint(path: str = "") -> str:
+    try:
+        base_url = get_xano_customer_api_url()
+    except RuntimeError as err:
+        raise XanoCustomerError(
+            "A integração com clientes não está configurada."
+        ) from err
+    return f"{base_url}/clientes{path}"
+
+
+async def _customer_request(
+    method: str,
+    path: str,
+    auth_token: str,
+    *,
+    params: Optional[dict[str, str]] = None,
+    json_body: Optional[dict[str, Any]] = None,
+) -> httpx.Response:
+    try:
+        return await _authenticated_request(
+            method,
+            _customer_endpoint(path),
+            auth_token,
+            params=params,
+            json_body=json_body,
+        )
+    except XanoCatalogError as err:
+        raise XanoCustomerError(err.user_message) from err
 
 
 def _raise_catalog_http_error(
@@ -449,6 +509,241 @@ async def update_film_xano(
         operation="PATCH catalogo-filmes/filmes/{id}",
     )
     return _write_film_response(response)
+
+
+def _raise_customer_http_error(
+    response: httpx.Response,
+    *,
+    customer_not_found: bool = False,
+    operation: str,
+) -> None:
+    if response.is_success:
+        return
+    response_message = ""
+    if response.status_code in (400, 409, 422):
+        try:
+            error_body = response.json()
+        except (UnicodeDecodeError, ValueError):
+            error_body = {}
+        if isinstance(error_body, dict):
+            raw_message = error_body.get("message", "")
+            if isinstance(raw_message, str):
+                response_message = raw_message.casefold()
+
+    if response.status_code in (401, 403):
+        message = "Você não tem permissão para realizar esta operação."
+    elif response.status_code == 404 and customer_not_found:
+        message = "Cliente não encontrado."
+    elif response.status_code == 404:
+        message = "Rota de clientes não encontrada."
+    elif response.status_code == 409 or (
+        response.status_code in (400, 422)
+        and "já existe um cliente cadastrado com este cpf" in response_message
+    ):
+        message = "Já existe um cliente cadastrado com este CPF."
+    elif response.status_code in (400, 422):
+        message = "Os dados enviados não foram aceitos pelo cadastro de clientes."
+    elif response.status_code >= 500:
+        request_id = (
+            response.headers.get("x-request-id")
+            or response.headers.get("x-correlation-id")
+            or response.headers.get("cf-ray", "")
+        )
+        message = (
+            f"O Xano retornou erro interno ao executar {operation} "
+            f"(HTTP {response.status_code})."
+        )
+        if request_id:
+            message += f" Referência: {request_id}."
+        logger.error(
+            "Erro interno do Xano em clientes (operação=%s; HTTP=%s; request_id=%s)",
+            operation,
+            response.status_code,
+            request_id or "unavailable",
+        )
+        raise XanoCustomerError(message)
+    else:
+        message = "Não foi possível concluir a operação de clientes."
+    logger.warning("Operação de clientes recusada pelo Xano (HTTP %s)", response.status_code)
+    raise XanoCustomerError(message)
+
+
+def _is_customer_summary(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("id"), int)
+        and isinstance(value.get("nome"), str)
+        and isinstance(value.get("cpf_mascarado"), str)
+        and "cpf" not in value
+        and "email" not in value
+        and "telefone" not in value
+        and value.get("status") in {"active", "inactive"}
+        and isinstance(value.get("bloqueio_manual_ativo"), bool)
+    )
+
+
+def _is_customer_detail(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("id"), int)
+        and isinstance(value.get("nome"), str)
+        and isinstance(value.get("cpf"), str)
+        and len(value["cpf"]) == 11
+        and (value.get("email") is None or isinstance(value.get("email"), str))
+        and (value.get("telefone") is None or isinstance(value.get("telefone"), str))
+        and value.get("status") in {"active", "inactive"}
+        and isinstance(value.get("bloqueio_manual_ativo"), bool)
+        and (
+            value.get("motivo_bloqueio_manual") is None
+            or isinstance(value.get("motivo_bloqueio_manual"), str)
+        )
+        and (
+            value.get("bloqueado_por") is None
+            or isinstance(value.get("bloqueado_por"), int)
+        )
+    )
+
+
+def _customer_detail_response(response: httpx.Response) -> ClienteDetalhe:
+    try:
+        customer = response.json()
+    except ValueError as err:
+        raise XanoCustomerError("O Xano retornou uma resposta inválida para o cliente.") from err
+    if not _is_customer_detail(customer):
+        raise XanoCustomerError("O Xano retornou uma resposta inválida para o cliente.")
+    return customer
+
+
+def _write_customer_response(response: httpx.Response) -> ClienteDetalhe:
+    try:
+        result = response.json()
+    except ValueError as err:
+        raise XanoCustomerError("O Xano retornou uma resposta inválida para o cliente.") from err
+    if (
+        isinstance(result, dict)
+        and result.get("audit_succeeded") is False
+        and _is_customer_detail(result.get("customer"))
+    ):
+        raise XanoCustomerAuditError(
+            "O cliente foi gravado, mas a auditoria não foi concluída. "
+            "Não repita a operação; confirme o cadastro antes de tentar novamente."
+        )
+    if (
+        not isinstance(result, dict)
+        or result.get("audit_succeeded") is not True
+        or not _is_customer_detail(result.get("customer"))
+    ):
+        raise XanoCustomerError("O Xano retornou uma resposta inválida para a gravação do cliente.")
+    return result["customer"]
+
+
+async def list_customers_xano(
+    auth_token: str,
+    *,
+    nome: str = "",
+    cpf: str = "",
+    page: int = 1,
+    per_page: int = 20,
+) -> PaginaClientes:
+    params = {
+        "page": str(max(1, page)),
+        "per_page": str(min(50, max(1, per_page))),
+    }
+    if nome.strip():
+        params["nome"] = nome.strip()
+    if cpf.strip():
+        params["cpf"] = cpf.strip()
+    try:
+        response = await _customer_request("GET", "", auth_token, params=params)
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consultar clientes: %s", type(err).__name__)
+        raise XanoCustomerError("Não foi possível consultar os clientes no Xano.") from err
+    _raise_customer_http_error(response, operation="GET clientes")
+    try:
+        result = response.json()
+    except ValueError as err:
+        raise XanoCustomerError("O Xano retornou uma lista de clientes inválida.") from err
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("items"), list)
+        or any(not _is_customer_summary(item) for item in result["items"])
+        or not all(isinstance(result.get(field), int) for field in ("page", "per_page", "total"))
+        or result["page"] < 1
+        or not 1 <= result["per_page"] <= 50
+        or result["total"] < 0
+    ):
+        raise XanoCustomerError("O Xano retornou uma lista de clientes inválida.")
+    return result
+
+
+async def get_customer_xano(auth_token: str, customer_id: int) -> ClienteDetalhe:
+    try:
+        response = await _customer_request(
+            "GET", f"/{quote(str(customer_id), safe='')}", auth_token
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consultar cliente: %s", type(err).__name__)
+        raise XanoCustomerError("Não foi possível carregar o cliente no Xano.") from err
+    _raise_customer_http_error(
+        response, customer_not_found=True, operation="GET clientes/{id}"
+    )
+    return _customer_detail_response(response)
+
+
+async def create_customer_xano(
+    auth_token: str, data: dict[str, Any]
+) -> ClienteDetalhe:
+    try:
+        response = await _customer_request("POST", "", auth_token, json_body=data)
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao cadastrar cliente: %s", type(err).__name__)
+        raise XanoCustomerError("Não foi possível cadastrar o cliente no Xano.") from err
+    _raise_customer_http_error(response, operation="POST clientes")
+    return _write_customer_response(response)
+
+
+async def update_customer_xano(
+    auth_token: str, customer_id: int, data: dict[str, Any]
+) -> ClienteDetalhe:
+    try:
+        response = await _customer_request(
+            "PATCH", f"/{quote(str(customer_id), safe='')}", auth_token, json_body=data
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao atualizar cliente: %s", type(err).__name__)
+        raise XanoCustomerError("Não foi possível atualizar o cliente no Xano.") from err
+    _raise_customer_http_error(
+        response, customer_not_found=True, operation="PATCH clientes/{id}"
+    )
+    return _write_customer_response(response)
+
+
+async def set_customer_manual_block_xano(
+    auth_token: str,
+    customer_id: int,
+    *,
+    bloqueado: bool,
+    motivo: str | None,
+) -> ClienteDetalhe:
+    payload: dict[str, Any] = {"bloqueado": bloqueado}
+    if bloqueado:
+        payload["motivo"] = motivo
+    try:
+        response = await _customer_request(
+            "PATCH",
+            f"/{quote(str(customer_id), safe='')}/bloqueio-manual",
+            auth_token,
+            json_body=payload,
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao alterar bloqueio do cliente: %s", type(err).__name__)
+        raise XanoCustomerError("Não foi possível alterar o bloqueio do cliente no Xano.") from err
+    _raise_customer_http_error(
+        response,
+        customer_not_found=True,
+        operation="PATCH clientes/{id}/bloqueio-manual",
+    )
+    return _write_customer_response(response)
 
 
 def is_authorized_employee(me_data: Optional[Dict[str, Any]]) -> bool:

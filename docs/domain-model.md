@@ -122,6 +122,14 @@ Representa a pessoa que pode realizar locações na locadora.
 - O bloqueio não deve apagar o histórico do cliente.
 - A situação do cliente deve ser compatível com suas pendências registradas.
 
+#### Fronteira implementada do cadastro
+
+- O cadastro atual mantém `id` estável, nome, CPF válido e único, contato, situação `active|inactive` e bloqueio manual separado.
+- Consultas internas são protegidas; a listagem minimiza dados pessoais e apresenta somente CPF mascarado.
+- Somente `admin` cria, atualiza, ativa/inativa ou altera bloqueio manual; `member` apenas localiza e consulta.
+- O histórico de locações, multas, pagamentos, pendências e bloqueio financeiro depende das respectivas capacidades futuras e não é armazenado nem simulado no cadastro do cliente.
+- A futura liberação de bloqueio financeiro será derivada da quitação confirmada, sem reutilizar o controle de bloqueio manual.
+
 ### Locação
 
 Representa o compromisso operacional de disponibilizar um exemplar a um cliente durante um período determinado.

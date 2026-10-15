@@ -137,7 +137,7 @@ class TestEnforceRoleContract(unittest.TestCase):
         inactive_check = self.source.split(
             "if ($user.is_active == false)", maxsplit=1
         )[1].split("\n      }\n    }", maxsplit=1)[0]
-        self.assert_denial_is_audited_before_throw(
+        self.assert_denial_is_audited_before_rejection(
             inactive_check,
             "denied_inactive",
         )
@@ -163,7 +163,7 @@ class TestEnforceRoleContract(unittest.TestCase):
         role_check = self.source.split(
             "if ($user_role_level < $required_role_level)", maxsplit=1
         )[1]
-        self.assert_denial_is_audited_before_throw(
+        self.assert_denial_is_audited_before_rejection(
             role_check,
             "denied_role:",
             result_is_prefix=True,
@@ -174,7 +174,7 @@ class TestEnforceRoleContract(unittest.TestCase):
             "if ($user_role_level == null || $user_role_level <= 0)",
             maxsplit=1,
         )[1]
-        self.assert_denial_is_audited_before_throw(
+        self.assert_denial_is_audited_before_rejection(
             role_check,
             "denied_role_unrecognized",
         )
@@ -292,11 +292,11 @@ class TestEnforceRoleContract(unittest.TestCase):
         self.assertLess(role_check, user_lookup)
         self.assertLess(role_check, email_send)
 
-    def assert_denial_is_audited_before_throw(
+    def assert_denial_is_audited_before_rejection(
         self, source, expected_result, result_is_prefix=False
     ):
         audit = source.index('action : "authorization_denied"')
-        denial = source.index("throw {")
+        denial = source.index("precondition (false)")
         self.assertLess(audit, denial)
         audit_source = source[:denial]
         if result_is_prefix:
@@ -306,7 +306,7 @@ class TestEnforceRoleContract(unittest.TestCase):
             )
         else:
             self.assertIn(f'result : "{expected_result}"', audit_source)
-        self.assertIn("user_id: $user.id", audit_source)
+        self.assertIn("user_id: $input.user_id", audit_source)
         self.assertNotRegex(
             audit_source,
             r"password|token|email|user_record",
