@@ -11,10 +11,12 @@ import httpx
 
 from ProjetoLocadora.catalogo_filmes import Filme
 from ProjetoLocadora.clientes import ClienteDetalhe, ClienteResumo, PaginaClientes
+from ProjetoLocadora.exemplares import Exemplar, ExemplarCadastro
 from ProjetoLocadora.config import (
     get_xano_auth_api_url,
     get_xano_catalog_api_url,
     get_xano_customer_api_url,
+    get_xano_exemplar_api_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,18 @@ class XanoCustomerError(Exception):
 
 class XanoCustomerAuditError(XanoCustomerError):
     """O Xano persistiu o cliente, mas não confirmou a auditoria."""
+
+
+class XanoExemplarError(Exception):
+    """Falha explícita em uma operação de exemplares no Xano."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.user_message = message
+
+
+class XanoExemplarAuditError(XanoExemplarError):
+    """O Xano persistiu o exemplar, mas não confirmou a auditoria."""
 
 
 def _login_response_data(status_code: int, body: bytes) -> Optional[Dict[str, Any]]:
@@ -928,3 +942,178 @@ async def update_password_xano(
     except Exception as err:
         logger.error("Erro inesperado ao atualizar senha: %s", type(err).__name__)
         return False
+
+
+def _exemplar_endpoint(path: str = "") -> str:
+    try:
+        base_url = get_xano_exemplar_api_url()
+    except RuntimeError as err:
+        raise XanoExemplarError(
+            "A integração com exemplares não está configurada."
+        ) from err
+    return f"{base_url}/exemplares{path}"
+
+
+async def _exemplar_request(
+    method: str,
+    path: str,
+    auth_token: str,
+    *,
+    json_body: Optional[dict[str, Any]] = None,
+) -> httpx.Response:
+    try:
+        return await _authenticated_request(
+            method,
+            _exemplar_endpoint(path),
+            auth_token,
+            json_body=json_body,
+        )
+    except XanoCatalogError as err:
+        raise XanoExemplarError(err.user_message) from err
+
+
+def _raise_exemplar_http_error(
+    response: httpx.Response,
+    *,
+    film_not_found: bool = False,
+    operation: str,
+) -> None:
+    if response.is_success:
+        return
+
+    response_message = ""
+    if response.status_code in (400, 409, 422):
+        try:
+            error_body = response.json()
+        except (UnicodeDecodeError, ValueError):
+            error_body = {}
+        if isinstance(error_body, dict) and isinstance(error_body.get("message"), str):
+            response_message = error_body["message"].casefold()
+
+    if response.status_code in (401, 403):
+        message = "Você não tem permissão para realizar esta operação."
+    elif response.status_code == 404 and film_not_found:
+        message = "Filme não encontrado."
+    elif response.status_code == 404:
+        message = "Rota de exemplares não encontrada."
+    elif response.status_code == 409 or (
+        response.status_code in (400, 422)
+        and "exemplar" in response_message
+        and "identificador" in response_message
+    ):
+        message = "Já existe um exemplar com este identificador."
+    elif response.status_code in (400, 422):
+        message = "Os dados enviados não foram aceitos pelo cadastro de exemplares."
+    elif response.status_code >= 500:
+        request_id = (
+            response.headers.get("x-request-id")
+            or response.headers.get("x-correlation-id")
+            or response.headers.get("cf-ray", "")
+        )
+        message = (
+            f"O Xano retornou erro interno ao executar {operation} "
+            f"(HTTP {response.status_code})."
+        )
+        if request_id:
+            message += f" Referência: {request_id}."
+        logger.error(
+            "Erro interno do Xano em exemplares (operação=%s; HTTP=%s; request_id=%s)",
+            operation,
+            response.status_code,
+            request_id or "unavailable",
+        )
+        raise XanoExemplarError(message)
+    else:
+        message = "Não foi possível concluir a operação de exemplares."
+    logger.warning(
+        "Operação de exemplares recusada pelo Xano (HTTP %s)",
+        response.status_code,
+    )
+    raise XanoExemplarError(message)
+
+
+def _is_exemplar(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("id"), int)
+        and isinstance(value.get("identificador"), str)
+        and isinstance(value.get("filme_id"), int)
+        and isinstance(value.get("filme_titulo"), str)
+    )
+
+
+def _write_exemplar_response(response: httpx.Response) -> Exemplar:
+    try:
+        result = response.json()
+    except ValueError as err:
+        raise XanoExemplarError(
+            "O Xano retornou uma resposta inválida para o cadastro do exemplar."
+        ) from err
+
+    if (
+        isinstance(result, dict)
+        and result.get("audit_succeeded") is False
+        and _is_exemplar(result.get("exemplar"))
+    ):
+        raise XanoExemplarAuditError(
+            "O exemplar foi gravado, mas a auditoria não foi concluída. "
+            "Não repita a operação; confirme o cadastro antes de tentar novamente."
+        )
+    if (
+        not isinstance(result, dict)
+        or result.get("audit_succeeded") is not True
+        or not _is_exemplar(result.get("exemplar"))
+    ):
+        raise XanoExemplarError(
+            "O Xano retornou uma resposta inválida para a gravação do exemplar."
+        )
+    return result["exemplar"]
+
+
+async def list_exemplares_xano(auth_token: str) -> list[Exemplar]:
+    try:
+        response = await _exemplar_request("GET", "", auth_token)
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao consultar exemplares: %s", type(err).__name__)
+        raise XanoExemplarError(
+            "Não foi possível consultar os exemplares no Xano."
+        ) from err
+
+    _raise_exemplar_http_error(response, operation="GET exemplares")
+    try:
+        exemplares = response.json()
+    except ValueError as err:
+        raise XanoExemplarError(
+            "O Xano retornou uma lista de exemplares inválida."
+        ) from err
+    if not isinstance(exemplares, list) or any(
+        not _is_exemplar(exemplar) for exemplar in exemplares
+    ):
+        raise XanoExemplarError(
+            "O Xano retornou uma lista de exemplares inválida."
+        )
+    return exemplares
+
+
+async def create_exemplar_xano(
+    auth_token: str, data: ExemplarCadastro
+) -> Exemplar:
+    try:
+        response = await _exemplar_request(
+            "POST",
+            "",
+            auth_token,
+            json_body=data,
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao cadastrar exemplar: %s", type(err).__name__)
+        raise XanoExemplarError(
+            "Não foi possível cadastrar o exemplar no Xano."
+        ) from err
+
+    _raise_exemplar_http_error(
+        response,
+        film_not_found=True,
+        operation="POST exemplares",
+    )
+    return _write_exemplar_response(response)

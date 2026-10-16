@@ -50,6 +50,21 @@ def get_xano_customer_api_url() -> str:
     return customer_url
 
 
+def get_xano_exemplar_api_url() -> str:
+    exemplar_url = _required_url("XANO_EXEMPLAR_API_URL")
+    reserved_urls = {
+        get_xano_auth_api_url(): "Authentication",
+        get_xano_catalog_api_url(): "Catálogo de Filmes",
+        get_xano_customer_api_url(): "Clientes",
+    }
+    if exemplar_url in reserved_urls:
+        raise RuntimeError(
+            "XANO_EXEMPLAR_API_URL deve apontar para o grupo Exemplares, "
+            f"não para o grupo {reserved_urls[exemplar_url]}."
+        )
+    return exemplar_url
+
+
 def get_frontend_base_url() -> str:
     return (
         os.getenv("FRONTEND_BASE_URL") or "http://localhost:3000"

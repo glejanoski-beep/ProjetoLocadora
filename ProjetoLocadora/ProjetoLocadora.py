@@ -6,6 +6,7 @@ import reflex as rx
 
 from ProjetoLocadora.catalogo_filmes import (
     CLASSIFICACOES,
+    Filme,
     FilmeCatalogo,
     centavos_para_reais,
     validar_filme,
@@ -16,19 +17,23 @@ from ProjetoLocadora.clientes import (
     validar_bloqueio_manual,
     validar_cliente,
 )
+from ProjetoLocadora.exemplares import Exemplar, validar_exemplar
 from ProjetoLocadora.xano_client import (
     GENERIC_AUTH_ERROR,
     XanoCatalogError,
     XanoCustomerError,
+    XanoExemplarError,
     consume_password_reset_token,
     create_film_xano,
     create_customer_xano,
+    create_exemplar_xano,
     get_customer_xano,
     get_film_xano,
     get_me_xano,
     is_authorized_employee,
     list_films_xano,
     list_customers_xano,
+    list_exemplares_xano,
     login_xano,
     request_password_reset,
     update_film_xano,
@@ -97,6 +102,16 @@ class State(rx.State):
     customer_detail_error: str = ""
     customer_block_reason: str = ""
     customer_block_loading: bool = False
+    exemplares: list[Exemplar] = []
+    exemplares_loading: bool = False
+    exemplares_error: str = ""
+    exemplares_success: str = ""
+    exemplar_identifier: str = ""
+    exemplar_film_selection: str = ""
+    exemplar_films: list[Filme] = []
+    exemplar_films_error: str = ""
+    exemplar_form_error: str = ""
+    exemplar_form_loading: bool = False
 
     @rx.var
     def has_films(self) -> bool:
@@ -105,6 +120,17 @@ class State(rx.State):
     @rx.var
     def has_customers(self) -> bool:
         return bool(self.customers)
+
+    @rx.var
+    def has_exemplares(self) -> bool:
+        return bool(self.exemplares)
+
+    @rx.var
+    def exemplar_film_options(self) -> list[str]:
+        return [
+            f"{film['id']} | {film['titulo']}"
+            for film in self.exemplar_films
+        ]
 
     @rx.var
     def customers_has_previous_page(self) -> bool:
@@ -205,6 +231,12 @@ class State(rx.State):
     def capture_customer_block_reason(self, value: str) -> None:
         self.customer_block_reason = value
 
+    def capture_exemplar_identifier(self, value: str) -> None:
+        self.exemplar_identifier = value
+
+    def capture_exemplar_film_selection(self, value: str) -> None:
+        self.exemplar_film_selection = value
+
     def _clear_session(self) -> None:
         self._login_email = ""
         self._login_password = ""
@@ -247,6 +279,74 @@ class State(rx.State):
         if self._user_role != "admin":
             return rx.redirect("/clientes")
         return None
+
+    def _require_exemplar_admin(self):
+        if not self._xano_auth_token:
+            self._clear_session()
+            return rx.redirect("/login")
+        if self._user_role != "admin":
+            return rx.redirect("/exemplares")
+        return None
+
+    async def load_exemplares(self):
+        if not self._xano_auth_token:
+            self._clear_session()
+            return rx.redirect("/login")
+
+        self.exemplares_loading = True
+        self.exemplares_error = ""
+        self.exemplares_success = ""
+        try:
+            self.exemplares = await list_exemplares_xano(self._xano_auth_token)
+        except XanoExemplarError as err:
+            self.exemplares_error = err.user_message
+            self.exemplares = []
+        finally:
+            self.exemplares_loading = False
+
+        if self._user_role == "admin":
+            self.exemplar_films_error = ""
+            self.exemplar_films = []
+            try:
+                self.exemplar_films = await list_films_xano(self._xano_auth_token)
+            except XanoCatalogError as err:
+                self.exemplar_films_error = err.user_message
+
+    async def submit_exemplar(self):
+        redirect = self._require_exemplar_admin()
+        if redirect:
+            return redirect
+
+        self.exemplar_form_error = ""
+        selected_film_id: int | None = None
+        try:
+            selected_film_id = int(self.exemplar_film_selection.split(" | ", 1)[0])
+        except (ValueError, IndexError):
+            pass
+
+        errors, payload = validar_exemplar(
+            identificador=self.exemplar_identifier,
+            filme_id=selected_film_id,
+        )
+        if errors:
+            self.exemplar_form_error = next(iter(errors.values()))
+            return
+
+        self.exemplar_form_loading = True
+        try:
+            exemplar = await create_exemplar_xano(
+                self._xano_auth_token,
+                payload,
+            )
+        except XanoExemplarError as err:
+            self.exemplar_form_error = err.user_message
+        else:
+            self.exemplares = [exemplar, *self.exemplares]
+            self.exemplares_success = "Exemplar cadastrado com sucesso."
+            self.exemplar_identifier = ""
+            self.exemplar_film_selection = ""
+        finally:
+            self.exemplar_form_loading = False
 
     async def load_customers(self):
         if not self._xano_auth_token:
@@ -792,6 +892,7 @@ def render_dashboard() -> rx.Component:
             ),
             rx.link("Gerenciar catálogo de filmes", href="/filmes"),
             rx.link("Gerenciar clientes", href="/clientes"),
+            rx.link("Consultar exemplares", href="/exemplares"),
             spacing="5",
             min_height="85vh",
         ),
@@ -1209,6 +1310,125 @@ def render_films_page() -> rx.Component:
     )
 
 
+def render_exemplar_card(exemplar: Exemplar) -> rx.Component:
+    return rx.box(
+        rx.vstack(
+            rx.heading("Exemplar ", exemplar["identificador"], size="5"),
+            rx.text("Filme: ", exemplar["filme_titulo"]),
+            rx.text("ID do filme: ", exemplar["filme_id"], color="gray"),
+            spacing="1",
+            align="start",
+        ),
+        padding="1rem",
+        border="1px solid #e5e7eb",
+        border_radius="12px",
+        width="100%",
+    )
+
+
+def render_exemplares_page() -> rx.Component:
+    return rx.container(
+        rx.vstack(
+            rx.hstack(
+                rx.heading("Exemplares", size="8"),
+                width="100%",
+                justify="between",
+                align="center",
+            ),
+            rx.link("Voltar ao backoffice", href="/backoffice"),
+            rx.cond(
+                State.exemplares_success != "",
+                rx.callout(
+                    State.exemplares_success,
+                    color_scheme="green",
+                    role="status",
+                ),
+            ),
+            rx.cond(
+                State.exemplares_error != "",
+                rx.callout(
+                    State.exemplares_error,
+                    color_scheme="red",
+                    role="alert",
+                ),
+            ),
+            rx.cond(
+                State.user_role == "admin",
+                rx.box(
+                    rx.vstack(
+                        rx.heading("Cadastrar exemplar", size="5"),
+                        rx.cond(
+                            State.exemplar_films_error != "",
+                            rx.callout(
+                                State.exemplar_films_error,
+                                color_scheme="red",
+                                role="alert",
+                            ),
+                        ),
+                        rx.cond(
+                            State.exemplar_form_error != "",
+                            rx.callout(
+                                State.exemplar_form_error,
+                                color_scheme="red",
+                                role="alert",
+                            ),
+                        ),
+                        rx.input(
+                            placeholder="Identificador do exemplar",
+                            value=State.exemplar_identifier,
+                            on_change=State.capture_exemplar_identifier,
+                            required=True,
+                            aria_label="Identificador do exemplar",
+                        ),
+                        rx.select(
+                            State.exemplar_film_options,
+                            value=State.exemplar_film_selection,
+                            on_change=State.capture_exemplar_film_selection,
+                            required=True,
+                            aria_label="Filme associado ao exemplar",
+                        ),
+                        rx.button(
+                            "Cadastrar exemplar",
+                            on_click=State.submit_exemplar,
+                            loading=State.exemplar_form_loading,
+                            width="100%",
+                        ),
+                        spacing="3",
+                        align="stretch",
+                        width="100%",
+                    ),
+                    padding="1.5rem",
+                    border="1px solid #e5e7eb",
+                    border_radius="12px",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                State.exemplares_loading,
+                rx.spinner(),
+                rx.cond(
+                    State.exemplares_error != "",
+                    rx.fragment(),
+                    rx.cond(
+                        State.has_exemplares,
+                        rx.vstack(
+                            rx.foreach(State.exemplares, render_exemplar_card),
+                            width="100%",
+                            align="stretch",
+                        ),
+                        rx.text("Nenhum exemplar encontrado.", color="gray"),
+                    ),
+                ),
+            ),
+            spacing="4",
+            width="100%",
+            align="stretch",
+        ),
+        max_width="60rem",
+        padding_y="2rem",
+    )
+
+
 def render_film_form() -> rx.Component:
     return rx.container(
         rx.vstack(
@@ -1309,6 +1529,11 @@ def edit_customer_page() -> rx.Component:
 @rx.page(route="/filmes", on_load=State.load_films)
 def films_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_films_page(), rx.fragment())
+
+
+@rx.page(route="/exemplares", on_load=State.load_exemplares)
+def exemplares_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_exemplares_page(), rx.fragment())
 
 
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)

@@ -90,6 +90,10 @@ Representa uma cópia física individual de um filme, aquela que efetivamente po
 - Um exemplar alugado, danificado, perdido ou baixado não deve aparecer como disponível.
 - A disponibilidade deve ser determinada no nível do exemplar, e não somente no nível do filme.
 
+#### Recorte implementado nesta change
+
+O export local do Xano define o exemplar com identificador próprio e referência ao `id` de um filme existente. O identificador é único na persistência e comparado pelo valor exato informado. A consulta retorna a identificação de cada exemplar junto ao identificador e ao título do filme associado; o backend exige `admin` para cadastrar e permite consulta a `member` e `admin`. Este recorte não implementa nem define estado, disponibilidade, localização, datas, locações ou controle de estoque.
+
 ### Cliente
 
 Representa a pessoa que pode realizar locações na locadora.
