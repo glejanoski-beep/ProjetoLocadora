@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import reflex as rx
 import httpx
 from ProjetoLocadora.ProjetoLocadora import State
 from ProjetoLocadora.xano_client import get_me_xano, is_authorized_employee
@@ -66,7 +67,7 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
     async def test_login_accepts_active_member_and_admin(self):
         for role in ("member", "admin"):
             with self.subTest(role=role):
-                state = State(_reflex_internal_init=True)
+                state = await rx.State(_reflex_internal_init=True).get_state(State)
                 state._login_email = f"{role}@example.test"
                 state._login_password = "test-password"
 
@@ -101,7 +102,7 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state._user_id, "1")
 
     async def test_rejected_login_clears_session_and_preserves_generic_error(self):
-        state = State(_reflex_internal_init=True)
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
         state._login_email = "invalid@example.test"
         state._login_password = "invalid-test-password"
         state._xano_auth_token = "stale-token"
@@ -128,7 +129,7 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state._user_id, "")
 
     async def test_session_revalidation_clears_inactive_account(self):
-        state = State(_reflex_internal_init=True)
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
         state._xano_auth_token = "valid-token"
         state._user_id = "42"
         state._user_name = "Inactive User"
@@ -157,7 +158,7 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state._user_role, "")
 
     async def test_logout_clears_session_and_redirects_to_login(self):
-        state = State(_reflex_internal_init=True)
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
         state._xano_auth_token = "valid-token"
         state._user_id = "42"
         state._user_role = "admin"
