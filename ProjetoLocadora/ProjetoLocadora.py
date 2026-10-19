@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import reflex as rx
 
+from ProjetoLocadora.dashboard_state import DashboardState
+from ProjetoLocadora.dashboard import render_acervo_summary
 from ProjetoLocadora.catalogo_filmes import (
     CLASSIFICACOES,
     Filme,
@@ -50,6 +52,8 @@ class State(rx.State):
     error_message: str = ""
     _login_email: str = ""
     _login_password: str = ""
+    _session_revision: int = 0
+    _dashboard_synced_revision: int = 0
     _xano_auth_token: str = ""
     _user_id: str = ""
     _user_name: str = ""
@@ -238,6 +242,7 @@ class State(rx.State):
         self.exemplar_film_selection = value
 
     def _clear_session(self) -> None:
+        self._session_revision += 1
         self._login_email = ""
         self._login_password = ""
         self._xano_auth_token = ""
@@ -247,7 +252,17 @@ class State(rx.State):
         self._user_role = ""
         self.error_message = ""
 
+    async def _sync_dashboard_session(self) -> None:
+        if self._dashboard_synced_revision != self._session_revision:
+            dashboard = await self.get_state(DashboardState)
+            dashboard._invalidate()
+            self._dashboard_synced_revision = self._session_revision
+
     def _set_user(self, me: dict[str, object]) -> None:
+        if (self._user_id, self._user_role) != (
+            str(me.get("id", "")), str(me.get("role", "")),
+        ):
+            self._session_revision += 1
         self._user_id = str(me.get("id", ""))
         self._user_name = str(me.get("name", ""))
         self._user_email = str(me.get("email", ""))
@@ -291,6 +306,7 @@ class State(rx.State):
     async def load_exemplares(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
 
         self.exemplares_loading = True
@@ -314,6 +330,7 @@ class State(rx.State):
 
     async def submit_exemplar(self):
         redirect = self._require_exemplar_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
 
@@ -351,6 +368,7 @@ class State(rx.State):
     async def load_customers(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
         self.customers_loading = True
         self.customers_error = ""
@@ -391,6 +409,7 @@ class State(rx.State):
 
     async def load_new_customer(self):
         redirect = self._require_customer_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         self._clear_customer_form()
@@ -404,6 +423,7 @@ class State(rx.State):
     async def load_customer_detail(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
         customer_id = self._route_customer_id()
         self.customer_detail = None
@@ -424,6 +444,7 @@ class State(rx.State):
 
     async def load_customer_for_edit(self):
         redirect = self._require_customer_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         self._clear_customer_form()
@@ -450,6 +471,7 @@ class State(rx.State):
 
     async def submit_customer(self):
         redirect = self._require_customer_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         self.customer_form_error = ""
@@ -484,6 +506,7 @@ class State(rx.State):
 
     async def toggle_customer_manual_block(self):
         redirect = self._require_customer_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         if self.customer_detail is None:
@@ -528,6 +551,7 @@ class State(rx.State):
     async def load_films(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
 
         self.films_loading = True
@@ -556,6 +580,7 @@ class State(rx.State):
 
     async def load_new_film(self):
         redirect = self._require_catalog_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         self._clear_film_form()
@@ -564,6 +589,7 @@ class State(rx.State):
 
     async def load_film_for_edit(self):
         redirect = self._require_catalog_admin()
+        await self._sync_dashboard_session()
         if redirect:
             return redirect
         self._clear_film_form()
@@ -599,6 +625,7 @@ class State(rx.State):
     async def submit_film(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
         if self._user_role != "admin":
             return rx.redirect("/filmes")
@@ -639,27 +666,40 @@ class State(rx.State):
 
     async def restore_session(self):
         if not self._xano_auth_token:
+            self._clear_session()
+            await self._sync_dashboard_session()
             return
 
         me = await get_me_xano(self._xano_auth_token)
         if not me or not is_authorized_employee(me):
             self._clear_session()
+            await self._sync_dashboard_session()
             return
 
         self._set_user(me)
+        await self._sync_dashboard_session()
         return rx.redirect("/backoffice")
 
     async def require_session(self):
         if not self._xano_auth_token:
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
 
         me = await get_me_xano(self._xano_auth_token)
         if not me or not is_authorized_employee(me):
             self._clear_session()
+            await self._sync_dashboard_session()
             return rx.redirect("/login")
 
         self._set_user(me)
+        await self._sync_dashboard_session()
+
+    async def load_dashboard(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return DashboardState.load_summary()
 
     async def handle_login(self):
         email = self._login_email.strip()
@@ -676,6 +716,7 @@ class State(rx.State):
         password = ""
         if not auth_data or not auth_data.get("authToken"):
             self._clear_session()
+            await self._sync_dashboard_session()
             self.is_loading = False
             self.error_message = GENERIC_AUTH_ERROR
             return
@@ -683,17 +724,21 @@ class State(rx.State):
         me_data = await get_me_xano(auth_data["authToken"])
         if not me_data or not is_authorized_employee(me_data):
             self._clear_session()
+            await self._sync_dashboard_session()
             self.is_loading = False
             self.error_message = GENERIC_AUTH_ERROR
             return
 
+        self._session_revision += 1
         self._xano_auth_token = auth_data["authToken"]
         self._set_user(me_data)
+        await self._sync_dashboard_session()
         self.is_loading = False
         return rx.redirect("/backoffice")
 
     async def logout(self) -> None:
         self._clear_session()
+        await self._sync_dashboard_session()
         return rx.redirect("/login")
 
     async def request_reset_link(self) -> None:
@@ -822,6 +867,7 @@ def render_dashboard() -> rx.Component:
                 justify="between",
                 align="center",
             ),
+            render_acervo_summary(State.user_role),
             rx.hstack(
                 rx.box(
                     rx.vstack(
@@ -1546,7 +1592,7 @@ def edit_film_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_film_form(), rx.fragment())
 
 
-@rx.page(route="/", on_load=State.require_session)
+@rx.page(route="/", on_load=State.load_dashboard)
 def index() -> rx.Component:
     return rx.cond(
         State.is_authenticated,
@@ -1555,7 +1601,7 @@ def index() -> rx.Component:
     )
 
 
-@rx.page(route="/backoffice", on_load=State.require_session)
+@rx.page(route="/backoffice", on_load=State.load_dashboard)
 def backoffice_page() -> rx.Component:
     return rx.cond(
         State.is_authenticated,
