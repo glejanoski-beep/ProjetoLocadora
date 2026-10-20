@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 import reflex as rx
 
 from ProjetoLocadora.dashboard_state import DashboardState
@@ -44,12 +47,22 @@ from ProjetoLocadora.xano_client import (
     set_customer_manual_block_xano,
 )
 
+LOGIN_REQUIRED_ERROR = "Informe login e senha para continuar."
+RESET_EMAIL_ERROR = "Informe um e-mail válido."
+RESET_GENERIC_MESSAGE = (
+    "Se o e-mail estiver cadastrado, enviaremos um link para redefinição."
+)
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
 
 class State(rx.State):
     """Estado de autenticação do backoffice e sessão do funcionário."""
 
     is_loading: bool = False
     error_message: str = ""
+    password_visible: bool = False
+    reset_dialog_open: bool = False
+    reset_loading: bool = False
     _login_email: str = ""
     _login_password: str = ""
     _session_revision: int = 0
@@ -168,11 +181,29 @@ class State(rx.State):
     def user_role(self) -> str:
         return self._user_role
 
+    @rx.var
+    def password_input_type(self) -> str:
+        return "text" if self.password_visible else "password"
+
+    @rx.var
+    def password_toggle_label(self) -> str:
+        return "Ocultar senha" if self.password_visible else "Mostrar senha"
+
     def capture_login_email(self, value: str) -> None:
         self._login_email = value
 
     def capture_login_password(self, value: str) -> None:
         self._login_password = value
+
+    def toggle_password_visibility(self) -> None:
+        self.password_visible = not self.password_visible
+
+    def set_reset_dialog_open(self, is_open: bool) -> None:
+        self.reset_dialog_open = is_open
+        if not is_open:
+            self._reset_request_email = ""
+            self.reset_message = ""
+            self.reset_message_is_error = False
 
     def capture_reset_request_email(self, value: str) -> None:
         self._reset_request_email = value
@@ -701,55 +732,83 @@ class State(rx.State):
             return redirect
         return DashboardState.load_summary()
 
+    async def submit_login(self, form_data: dict[str, Any]):
+        if self.is_loading:
+            return
+        self._login_email = str(form_data.get("login", ""))
+        self._login_password = str(form_data.get("password", ""))
+        return await self.handle_login()
+
     async def handle_login(self):
+        if self.is_loading:
+            return
+
         email = self._login_email.strip()
         password = self._login_password
-        self._login_password = ""
         if not email or not password:
-            self.error_message = GENERIC_AUTH_ERROR
+            self._login_password = ""
+            self.error_message = LOGIN_REQUIRED_ERROR
             return
 
         self.is_loading = True
         self.error_message = ""
+        try:
+            auth_data = await login_xano(email, password)
+            if not auth_data or not auth_data.get("authToken"):
+                self._clear_session()
+                await self._sync_dashboard_session()
+                self.error_message = GENERIC_AUTH_ERROR
+                return
 
-        auth_data = await login_xano(email, password)
-        password = ""
-        if not auth_data or not auth_data.get("authToken"):
-            self._clear_session()
+            me_data = await get_me_xano(auth_data["authToken"])
+            if not me_data or not is_authorized_employee(me_data):
+                self._clear_session()
+                await self._sync_dashboard_session()
+                self.error_message = GENERIC_AUTH_ERROR
+                return
+
+            self._session_revision += 1
+            self._xano_auth_token = auth_data["authToken"]
+            self._set_user(me_data)
             await self._sync_dashboard_session()
+            return rx.redirect("/backoffice")
+        finally:
+            password = ""
+            self._login_password = ""
             self.is_loading = False
-            self.error_message = GENERIC_AUTH_ERROR
-            return
-
-        me_data = await get_me_xano(auth_data["authToken"])
-        if not me_data or not is_authorized_employee(me_data):
-            self._clear_session()
-            await self._sync_dashboard_session()
-            self.is_loading = False
-            self.error_message = GENERIC_AUTH_ERROR
-            return
-
-        self._session_revision += 1
-        self._xano_auth_token = auth_data["authToken"]
-        self._set_user(me_data)
-        await self._sync_dashboard_session()
-        self.is_loading = False
-        return rx.redirect("/backoffice")
 
     async def logout(self) -> None:
         self._clear_session()
         await self._sync_dashboard_session()
         return rx.redirect("/login")
 
+    async def submit_reset_link(self, form_data: dict[str, Any]) -> None:
+        if self.reset_loading:
+            return
+        self._reset_request_email = str(form_data.get("email", ""))
+        await self.request_reset_link()
+
     async def request_reset_link(self) -> None:
+        if self.reset_loading:
+            return
+
         email = self._reset_request_email.strip()
-        self.reset_message = "Se o e-mail estiver cadastrado, enviaremos um link para redefinição."
+        if not EMAIL_PATTERN.fullmatch(email):
+            self.reset_message = RESET_EMAIL_ERROR
+            self.reset_message_is_error = True
+            return
+
+        self.reset_loading = True
+        self.reset_message = RESET_GENERIC_MESSAGE
         self.reset_message_is_error = False
-        if email:
+        try:
             await request_password_reset(email)
+        finally:
+            self._reset_request_email = ""
+            self.reset_loading = False
 
     async def consume_reset_link(self) -> None:
-        params = self.router.page.params
+        params = self.router.url.query_parameters
         magic_token = params.get("magic_token", "")
         email = params.get("email", "")
         if not magic_token or not email:
@@ -798,53 +857,308 @@ class State(rx.State):
         return rx.redirect("/login")
 
 
+def login_corner(position: str) -> rx.Component:
+    """Renderiza uma das cantoneiras decorativas do painel de login."""
+
+    return rx.box(
+        class_name=f"retro-login__corner retro-login__corner--{position}",
+        aria_hidden="true",
+    )
+
+
+def cassette_badge() -> rx.Component:
+    """Marca visual da locadora inspirada em uma fita cassete."""
+
+    return rx.box(
+        rx.icon("cassette-tape", size=30, stroke_width=1.7),
+        class_name="retro-login__cassette",
+        role="img",
+        aria_label="Fita cassete",
+    )
+
+
+def login_header() -> rx.Component:
+    """Cabeçalho de identidade da tela de acesso."""
+
+    return rx.el.header(
+        cassette_badge(),
+        rx.text(
+            rx.text.span("CINEBYTE", class_name="retro-login__brand-purple"),
+            rx.text.span(" LOCADORA", class_name="retro-login__brand-warm"),
+            class_name="retro-login__brand",
+        ),
+        rx.heading(
+            "ACESSO DO FUNCION\u00c1RIO",
+            class_name="retro-login__title",
+        ),
+        rx.text(
+            "Entre para gerenciar o acervo e os aluguéis.",
+            class_name="retro-login__subtitle",
+        ),
+        class_name="retro-login__header",
+    )
+
+
+def login_field(
+    *,
+    label: str,
+    field_id: str,
+    name: str,
+    placeholder: str,
+    icon_name: str,
+    input_type,
+    on_change,
+    auto_complete: str,
+    trailing: rx.Component | None = None,
+) -> rx.Component:
+    """Campo reutilizável com label e ícones posicionados."""
+
+    return rx.box(
+        rx.el.label(
+            label,
+            html_for=field_id,
+            class_name="retro-login__label",
+        ),
+        rx.box(
+            rx.icon(
+                icon_name,
+                size=18,
+                stroke_width=1.8,
+                class_name="retro-login__field-icon",
+                aria_hidden="true",
+            ),
+            rx.el.input(
+                id=field_id,
+                name=name,
+                placeholder=placeholder,
+                type=input_type,
+                auto_complete=auto_complete,
+                required=True,
+                on_change=on_change,
+                aria_describedby="login-error",
+                aria_invalid=State.error_message != "",
+                class_name=(
+                    "retro-login__input retro-login__input--trailing"
+                    if trailing is not None
+                    else "retro-login__input"
+                ),
+            ),
+            trailing if trailing is not None else rx.fragment(),
+            class_name="retro-login__field-shell",
+        ),
+        class_name="retro-login__field",
+    )
+
+
+def password_visibility_button() -> rx.Component:
+    """Controle acessível que alterna a apresentação da senha."""
+
+    return rx.button(
+        rx.cond(
+            State.password_visible,
+            rx.icon("eye-off", size=19, stroke_width=1.8),
+            rx.icon("eye", size=19, stroke_width=1.8),
+        ),
+        type="button",
+        on_click=State.toggle_password_visibility,
+        aria_label=State.password_toggle_label,
+        title=State.password_toggle_label,
+        class_name="retro-login__password-toggle",
+    )
+
+
+def login_error_region() -> rx.Component:
+    """Reserva espaço estável para validação e falhas de autenticação."""
+
+    return rx.box(
+        rx.cond(
+            State.error_message != "",
+            rx.text(
+                State.error_message,
+                role="alert",
+                aria_live="assertive",
+                class_name="retro-login__error-text",
+            ),
+            rx.text(
+                "\u00a0",
+                aria_hidden="true",
+                class_name="retro-login__error-text",
+            ),
+        ),
+        id="login-error",
+        class_name="retro-login__error-slot",
+    )
+
+
+def password_recovery_dialog() -> rx.Component:
+    """Diálogo de recuperação ligado ao fluxo real de magic link."""
+
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.button(
+                "Esqueci minha senha",
+                type="button",
+                class_name="retro-login__forgot",
+            )
+        ),
+        rx.dialog.content(
+            rx.dialog.title(
+                "RECUPERAR ACESSO",
+                class_name="retro-reset__title",
+            ),
+            rx.dialog.description(
+                "Informe seu e-mail para receber um link de redefinição.",
+                class_name="retro-reset__description",
+            ),
+            rx.form(
+                rx.box(
+                    rx.el.label(
+                        "E-MAIL",
+                        html_for="reset-email",
+                        class_name="retro-login__label",
+                    ),
+                    rx.el.input(
+                        id="reset-email",
+                        name="email",
+                        type="email",
+                        placeholder="Digite seu e-mail",
+                        auto_complete="email",
+                        required=True,
+                        on_change=State.capture_reset_request_email,
+                        aria_describedby="reset-message",
+                        class_name="retro-login__input retro-reset__input",
+                    ),
+                    class_name="retro-login__field",
+                ),
+                rx.box(
+                    rx.cond(
+                        State.reset_message != "",
+                        rx.text(
+                            State.reset_message,
+                            role=rx.cond(
+                                State.reset_message_is_error,
+                                "alert",
+                                "status",
+                            ),
+                            aria_live="polite",
+                            class_name=rx.cond(
+                                State.reset_message_is_error,
+                                "retro-reset__message retro-reset__message--error",
+                                "retro-reset__message",
+                            ),
+                        ),
+                        rx.text("\u00a0", aria_hidden="true"),
+                    ),
+                    id="reset-message",
+                    class_name="retro-reset__message-slot",
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Cancelar",
+                            type="button",
+                            class_name="retro-reset__cancel",
+                        )
+                    ),
+                    rx.button(
+                        "Enviar link",
+                        type="submit",
+                        loading=State.reset_loading,
+                        disabled=State.reset_loading,
+                        class_name="retro-reset__submit",
+                    ),
+                    class_name="retro-reset__actions",
+                ),
+                on_submit=State.submit_reset_link,
+                no_validate=True,
+                reset_on_submit=False,
+                class_name="retro-reset__form",
+            ),
+            class_name="retro-reset-dialog",
+        ),
+        open=State.reset_dialog_open,
+        on_open_change=State.set_reset_dialog_open,
+    )
+
+
+def login_form() -> rx.Component:
+    """Formulário único de login, acionável por clique ou Enter."""
+
+    return rx.form(
+        login_field(
+            label="LOGIN",
+            field_id="login-identifier",
+            name="login",
+            placeholder="Digite seu usuário",
+            icon_name="user",
+            input_type="email",
+            on_change=State.capture_login_email,
+            auto_complete="username",
+        ),
+        login_field(
+            label="SENHA",
+            field_id="login-password",
+            name="password",
+            placeholder="Digite sua senha",
+            icon_name="lock-keyhole",
+            input_type=State.password_input_type,
+            on_change=State.capture_login_password,
+            auto_complete="current-password",
+            trailing=password_visibility_button(),
+        ),
+        password_recovery_dialog(),
+        login_error_region(),
+        rx.button(
+            rx.text("ENTRAR NO SISTEMA", class_name="retro-login__submit-text"),
+            rx.icon("arrow-right", size=18, stroke_width=2.1),
+            type="submit",
+            loading=State.is_loading,
+            disabled=State.is_loading,
+            aria_label="Entrar no sistema",
+            class_name="retro-login__submit",
+        ),
+        on_submit=State.submit_login,
+        no_validate=True,
+        reset_on_submit=False,
+        class_name="retro-login__form",
+    )
+
+
+def login_footer() -> rx.Component:
+    """Rodapé da área restrita."""
+
+    return rx.el.footer(
+        rx.box(class_name="retro-login__divider", aria_hidden="true"),
+        rx.text(
+            "\u00c1REA RESTRITA • VERS\u00c3O 2.4.8",
+            class_name="retro-login__footer-text",
+        ),
+        class_name="retro-login__footer",
+    )
+
+
+def login_panel() -> rx.Component:
+    """Painel central completo da tela de login."""
+
+    return rx.el.section(
+        login_corner("top-left"),
+        login_corner("top-right"),
+        login_corner("bottom-left"),
+        login_corner("bottom-right"),
+        login_header(),
+        login_form(),
+        login_footer(),
+        class_name="retro-login__panel",
+        aria_label="ACESSO DO FUNCION\u00c1RIO",
+    )
+
+
 @rx.page(route="/login", on_load=State.restore_session)
 def login_page() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.heading("Acesso do funcionário", size="8"),
-            rx.text("Use sua conta de membro ou administrador para entrar.", color="gray"),
-            rx.vstack(
-                rx.input(
-                    placeholder="E-mail",
-                    type="email",
-                    required=True,
-                    size="3",
-                    on_change=State.capture_login_email,
-                ),
-                rx.input(
-                    placeholder="Senha",
-                    type="password",
-                    required=True,
-                    size="3",
-                    on_change=State.capture_login_password,
-                ),
-                rx.cond(
-                    State.error_message != "",
-                    rx.callout(
-                        State.error_message,
-                        color_scheme="red",
-                        role="alert",
-                    ),
-                ),
-                rx.button(
-                    "Entrar",
-                    on_click=State.handle_login,
-                    loading=State.is_loading,
-                    size="3",
-                    width="100%",
-                ),
-                spacing="4",
-            ),
-            rx.link(
-                "Recuperar senha",
-                href="/recuperar-senha",
-                color="blue",
-            ),
-            spacing="4",
-            justify="center",
-            min_height="85vh",
-        )
+    return rx.el.main(
+        rx.box(class_name="retro-login__background", aria_hidden="true"),
+        login_panel(),
+        class_name="retro-login",
     )
 
 
@@ -1702,4 +2016,9 @@ def reset_password_page() -> rx.Component:
     )
 
 
-app = rx.App()
+app = rx.App(
+    stylesheets=[
+        "https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap",
+        "/login.css",
+    ]
+)

@@ -25,6 +25,24 @@ class TestReflexAuthState(unittest.TestCase):
     def test_password_is_not_persisted_in_reflex_state(self):
         self.assertNotIn("password", State.base_vars)
 
+    def test_login_and_reset_credentials_are_backend_only(self):
+        for field_name in (
+            "_login_email",
+            "_login_password",
+            "_reset_request_email",
+        ):
+            with self.subTest(field=field_name):
+                self.assertIn(field_name, State.backend_vars)
+                self.assertNotIn(field_name, State.base_vars)
+
+        for field_name in (
+            "password_visible",
+            "reset_dialog_open",
+            "reset_loading",
+        ):
+            with self.subTest(field=field_name):
+                self.assertIn(field_name, State.base_vars)
+
     def test_reset_auth_token_and_passwords_are_backend_only(self):
         for field_name in ("_reset_auth_token", "_new_password", "_confirm_new_password"):
             with self.subTest(field=field_name):
@@ -42,6 +60,22 @@ class TestReflexAuthState(unittest.TestCase):
         self.assertTrue(callable(getattr(State, "request_reset_link", None)))
         self.assertTrue(callable(getattr(State, "consume_reset_link", None)))
         self.assertTrue(callable(getattr(State, "update_password", None)))
+
+    def test_password_visibility_changes_only_presentation_state(self):
+        state = State(_reflex_internal_init=True)
+        state._login_password = "private-password"
+
+        state.toggle_password_visibility()
+        self.assertTrue(state.password_visible)
+        self.assertEqual(state.password_input_type, "text")
+        self.assertEqual(state.password_toggle_label, "Ocultar senha")
+        self.assertEqual(state._login_password, "private-password")
+
+        state.toggle_password_visibility()
+        self.assertFalse(state.password_visible)
+        self.assertEqual(state.password_input_type, "password")
+        self.assertEqual(state.password_toggle_label, "Mostrar senha")
+        self.assertEqual(state._login_password, "private-password")
 
     def test_member_and_admin_active_users_are_allowed(self):
         self.assertTrue(
@@ -100,6 +134,7 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state._xano_auth_token, f"token-{role}")
                 self.assertEqual(state._user_role, role)
                 self.assertEqual(state._user_id, "1")
+                self.assertEqual(state._login_password, "")
 
     async def test_rejected_login_clears_session_and_preserves_generic_error(self):
         state = await rx.State(_reflex_internal_init=True).get_state(State)
@@ -127,6 +162,85 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state.is_authenticated)
         self.assertEqual(state._xano_auth_token, "")
         self.assertEqual(state._user_id, "")
+        self.assertEqual(state._login_password, "")
+
+    async def test_login_form_data_requires_both_fields_without_calling_xano(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.login_xano",
+            new=AsyncMock(),
+        ) as login:
+            await state.submit_login({"login": "", "password": ""})
+
+        login.assert_not_awaited()
+        self.assertEqual(state.error_message, "Informe login e senha para continuar.")
+        self.assertEqual(state._login_password, "")
+        self.assertFalse(state.is_loading)
+
+    async def test_login_ignores_duplicate_submission_while_loading(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+        state.is_loading = True
+        state._login_email = "original@example.test"
+        state._login_password = "original-password"
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.login_xano",
+            new=AsyncMock(),
+        ) as login:
+            await state.submit_login(
+                {"login": "member@example.test", "password": "private-password"}
+            )
+
+        login.assert_not_awaited()
+        self.assertEqual(state._login_email, "original@example.test")
+        self.assertEqual(state._login_password, "original-password")
+
+    async def test_reset_request_rejects_invalid_email_without_xano_call(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.request_password_reset",
+            new=AsyncMock(),
+        ) as request_reset:
+            await state.submit_reset_link({"email": "invalido"})
+
+        request_reset.assert_not_awaited()
+        self.assertEqual(state.reset_message, "Informe um e-mail válido.")
+        self.assertTrue(state.reset_message_is_error)
+        self.assertFalse(state.reset_loading)
+
+    async def test_reset_request_uses_real_flow_with_generic_response(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.request_password_reset",
+            new=AsyncMock(return_value=True),
+        ) as request_reset:
+            await state.submit_reset_link({"email": "member@example.test"})
+
+        request_reset.assert_awaited_once_with("member@example.test")
+        self.assertEqual(
+            state.reset_message,
+            "Se o e-mail estiver cadastrado, enviaremos um link para redefinição.",
+        )
+        self.assertFalse(state.reset_message_is_error)
+        self.assertFalse(state.reset_loading)
+        self.assertEqual(state._reset_request_email, "")
+
+    async def test_reset_request_ignores_duplicate_submission_while_loading(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+        state.reset_loading = True
+        state._reset_request_email = "original@example.test"
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.request_password_reset",
+            new=AsyncMock(),
+        ) as request_reset:
+            await state.submit_reset_link({"email": "member@example.test"})
+
+        request_reset.assert_not_awaited()
+        self.assertEqual(state._reset_request_email, "original@example.test")
 
     async def test_session_revalidation_clears_inactive_account(self):
         state = await rx.State(_reflex_internal_init=True).get_state(State)
