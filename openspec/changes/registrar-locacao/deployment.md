@@ -55,7 +55,7 @@ sem persistência de locação ou dados fictícios de negócio.
 As seis bases reais dos grupos foram configuradas no `.env` privado deste checkout,
 com escritas `false`. Compilação Reflex aprovada. Servidor local em modo produção
 na porta `3010`; acesso a `/locacoes/nova` sem sessão redirecionou para `/login`.
-A conferência da tela autenticada aguarda login do operador. Os 175 testes principais
+Após login feito pelo operador, a navegação pelo link do backoffice carregou a tela autenticada: oito clientes reais, quatro exemplares para conferência administrativa e zero exemplares elegíveis. Aviso de homologação pendente e botões de confirmação desabilitados visíveis. Nenhuma seleção foi confirmada ou condição alterada. Os 175 testes principais
 passaram novamente após a correção, assim como validação sintática e OpenSpec estrito.
 O exemplo de configuração versionado contém somente campos vazios e gate `false`.
 
