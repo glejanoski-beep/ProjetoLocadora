@@ -1,10 +1,10 @@
-# Entrega local — registrar-locacao
+# Entrega — registrar-locacao
 
 ## Estado
 
-Implementação local na branch `codex/registrar-locacao`, baseada em `origin/main` `1a21fc8`, após autorização de APPLY. O fetch, a busca de PRs e o export de leitura de `v1` foram repetidos: mesmos PRs #1/#2 e 40 recursos publicados, sem locação de colega identificada. Nenhum registro, API, tabela, variável ou configuração foi alterado remotamente. Não houve push Git, PR ou merge.
+Implementação na branch `codex/registrar-locacao`, baseada em `origin/main` `1a21fc8`. Após APPLY local e autorização explícita de implantação, os recursos de produção foram publicados no Xano `v1` em 22/10/2026. A variável `XANO_RENTAL_WRITES_ENABLED` foi criada no painel com valor textual `false`, reaberta e conferida. Nenhuma locação ou ocupação foi criada; não houve backfill, push Git, PR ou merge.
 
-Frontend e transporte locais estão implementados e compilam. Backend tem schemas/stacks declarados e sintaxe validada; não foi executado no workspace. O módulo permanece sem URL real configurada e com escritas desabilitadas por padrão. A change não está concluída nem pronta para arquivamento: a homologação remota é pendente.
+Frontend e transporte locais estão implementados e compilam. Backend publicado com duas tabelas, quatro campos aditivos em exemplar, um grupo, cinco endpoints e uma função. A homologação comportamental remota permanece pendente; a change não está pronta para arquivamento nem liberação operacional. Ver `deployment.md` para evidências e identidade real do grupo.
 
 ## Comportamento implementado localmente
 
@@ -29,7 +29,7 @@ Essas evidências fundamentam o desenho e a sintaxe. **Não comprovam** índices
 
 ## Arquivos e inventário remoto proposto
 
-| Ação futura em `v1` | Recursos locais correspondentes |
+| Recursos implantados em `v1` (exceto harness opcional) | Recursos locais correspondentes |
 | --- | --- |
 | Criar tabela de histórico | `xano/xano/table/rental.xs` |
 | Criar tabela de ocupação exclusiva | `xano/xano/table/rental_occupancy.xs` |
@@ -40,22 +40,22 @@ Essas evidências fundamentam o desenho e a sintaxe. **Não comprovam** índices
 | Criar variável Xano com valor inicial textual `false` | `XANO_RENTAL_WRITES_ENABLED` |
 | Recurso opcional e temporário para homologação de rollback | `tests/xano_validation/rollback_POST.xs`, fora do diretório normal de implantação, protegido por `admin` e variável `XANO_RENTAL_ROLLBACK_TEST_ENABLED` |
 
-O GUID local de `exemplar` foi reconciliado com o GUID real repetidamente consultado no export: `8vzM3sxxeTHrTxaJGPUfK1JI8ZA`. Não foi criada outra tabela remota. Preservar esse recurso, seus IDs e os três campos originais. Os novos recursos não receberam `canonical` ou GUID fictícios. Não executar push integral, `sync --delete`, backfill de disponibilidade ou import de registros.
+O GUID local de `exemplar` foi reconciliado com o GUID real repetidamente consultado no export: `8vzM3sxxeTHrTxaJGPUfK1JI8ZA`. Não foi criada outra tabela remota. Preservar esse recurso, seus IDs e os três campos originais. Os novos recursos possuem GUIDs reais atribuídos pelo Xano e grupo com canonical `BovA1vb0`. Não executar push integral, `sync --delete`, backfill de disponibilidade ou import de registros.
 
 Integração Reflex: quatro módulos novos (`locacoes.py`, `locacoes_client.py`, `locacoes_state.py`, `locacoes_ui.py`), configuração própria e integração pontual no módulo principal. Cadastros, transporte existente, contratos públicos e change da dashboard foram preservados.
 
-## Configuração futura
+## Configuração da interface
 
-No `.env` local, somente após obter a base real do grupo criado:
+No `.env` do ambiente que executar a interface, usar a base real do grupo criado:
 
 ```dotenv
-# Preencher com a base HTTPS REAL do grupo Locações, sem /locacoes no final.
-XANO_RENTAL_API_URL=
+# Base HTTPS real, sem /locacoes no final.
+XANO_RENTAL_API_URL=https://x8ki-letl-twmt.n7.xano.io/api:BovA1vb0
 # Manter false durante preparação e até a homologação.
 XANO_RENTAL_WRITES_ENABLED=false
 ```
 
-Ausência ou URL inválida informa indisponibilidade, sem usar outro grupo como fallback. A variável de escrita existe independentemente no frontend e no Xano; ambas precisam de liberação deliberada. Leituras e reconciliação continuam possíveis quando as escritas forem desabilitadas. Criar a variável Xano explicitamente antes da publicação; ausência não deve ser usada como mecanismo implícito de configuração.
+Ausência ou URL inválida informa indisponibilidade, sem usar outro grupo como fallback. A variável de escrita existe independentemente no frontend e no Xano; ambas precisam de liberação deliberada. Leituras e reconciliação continuam possíveis quando as escritas forem desabilitadas. A variável Xano já foi criada e conferida como `false`; não habilitar antes da homologação.
 
 ## Plano executável de homologação, ainda não executado
 
@@ -85,9 +85,9 @@ Ausência ou URL inválida informa indisponibilidade, sem usar outro grupo como 
 - **52 testes** adicionais dos cadastros aprovados; cinco métodos específicos de Windows excluídos conforme limitação já registrada em `inspection.md`. Total confirmado: **227 testes**; não se declara aprovação desses cinco.
 - `reflex compile --dry`: compilação concluída. Sem servidor iniciado ou teste visual de navegador. A formatação automática de `reflex.lock/package.json` produzida pelo compilador foi revertida para manter o diff focado.
 - Validador XanoScript: os dez arquivos de produção novos/alterados e o harness temporário são sintaticamente válidos. Validação não executa o banco.
-- Verificação do script de homologação executada somente no modo padrão sem conexão; não foram usados tokens de validação, dados reais ou escrita remota nesta entrega.
+- Verificação do script de homologação executada somente no modo padrão sem conexão; não foram usados tokens de validação nem efetuadas escritas de negócio. A implantação posterior de schemas/APIs/configuração está registrada em `deployment.md`.
 - `openspec validate registrar-locacao --strict` e revisão de whitespace/diff devem passar antes do commit local.
 
 ## Pendências e limite de autorização
 
-As tarefas de backend com verificação comportamental permanecem abertas até a execução no Xano; o código local correspondente já foi entregue. A tarefa 4.2 requer autorização específica para publicação e testes de escrita. A autorização de APPLY concedida nesta conversa permite esta implementação local; não foi interpretada como autorização de migração ou de locações reais. O estado OpenSpec deve refletir essa distinção.
+As tarefas de backend com verificação comportamental permanecem abertas até homologação no Xano. A autorização de implantação foi executada somente para recursos e configuração desabilitada. Testes com gravações operacionais, harness temporário e ativação não foram executados nem presumidos autorizados.

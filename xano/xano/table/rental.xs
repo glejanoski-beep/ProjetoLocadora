@@ -21,4 +21,5 @@ table rental {
     {type: "btree", field: [{name: "exemplar_id"}]}
     {type: "btree", field: [{name: "customer_id"}]}
   ]
+  guid = "Rd-wyIaDjgv3T_lqRaZgzY4qEfg"
 }

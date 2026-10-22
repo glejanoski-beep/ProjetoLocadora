@@ -142,7 +142,6 @@ query "locacoes-validacao/rollback" verb=POST {
         var.update $rental { value = null }
         var.update $created { value = false }
         var.update $transaction_failed { value = true }
-        var $failure_name { value = $error.name }
         var $failure_message { value = $error.message }
       }
     }
@@ -175,9 +174,21 @@ query "locacoes-validacao/rollback" verb=POST {
                 }
               }
               else {
-                throw {
-                  name = $failure_name
-                  value = $failure_message
+                conditional {
+                  if ($failure_message == "Cliente não elegível para locação." || $failure_message == "Exemplar não disponível para locação." || $failure_message == "Filme não disponível para locação." || $failure_message == "Vencimento deve ser posterior à retirada.") {
+                    precondition (false) {
+                      error_type = "inputerror"
+                      error = $failure_message
+                    }
+                  }
+                  else {
+                    // O parser do servidor exige nome de exceção literal.
+                    // Não devolver detalhes internos de falha do banco.
+                    throw {
+                      name = "RentalOperationFailed"
+                      value = "Não foi possível confirmar a operação. Consulte a tentativa antes de repetir."
+                    }
+                  }
                 }
               }
             }

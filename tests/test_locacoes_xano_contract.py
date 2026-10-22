@@ -73,6 +73,10 @@ def check_create(source):
     assert not list(calls(transaction, "function.run"))
     assert "$auth.id" in flat and "$input.registered_by" not in flat
     assert len(list(calls(stack, "db.query"))) >= 3  # chave inicial, reconciliação externa, auditoria
+    # O validador local aceita nomes dinâmicos; o parser remoto os recusa.
+    for _, operation in calls(stack, "throw"):
+        name = unique_assignment(operation, "name")
+        assert isinstance(name, str) and name.startswith('"') and name.endswith('"')
 
 
 class TestRentalXanoContract(unittest.TestCase):

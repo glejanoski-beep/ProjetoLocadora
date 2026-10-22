@@ -24,11 +24,11 @@
 ## 4. Verificação de integridade e entrega
 
 - [x] 4.1 Validar OpenSpec estrito e revisar diff limitado ao escopo; atualizar overview/domain-model somente para comportamentos efetivamente implementados, sem declarar entrega remota antes da hora.
-- [ ] 4.2 Entregar inventário de alterações Xano, plano de implantação em `v1`, recursos de teste e rollback que preserve histórico; obter autorização específica antes de qualquer publicação ou teste remoto de escrita.
+- [x] 4.2 Entregar inventário de alterações Xano, plano de implantação em `v1`, recursos de teste e rollback que preserve histórico; obter autorização específica antes de qualquer publicação ou teste remoto de escrita.
 - [ ] 4.3 Em ambiente autorizado, provar que duas requisições concorrentes diferentes no mesmo exemplar produzem um único registro/ocupação; provar idempotência concorrente da mesma chave e rollback com falha injetada entre gravações; registrar evidência real, sem substituir por mocks.
 - [ ] 4.4 No mesmo ambiente autorizado, testar bloqueio/inativação e alteração de condição concorrentes, autorização com token antigo, confirmação auditada e resposta perdida; preservar registros operacionais e não criar dados fictícios na base compartilhada.
 - [x] 4.5 Relatar arquivos, testes, limitações, estado de publicação e cinco testes Windows pendentes quando aplicável; habilitar criação somente após garantias de integridade e configuração real confirmadas.
 
 ## Evidência e pendências
 
-Ver `delivery.md`: 227 testes locais, compilação Reflex e validação sintática Xano concluídos. As tarefas 2.2–2.5 têm código local entregue, mas permanecem abertas para não declarar verificação comportamental no Xano sem execução real. As tarefas 4.2–4.4 dependem de autorização específica e homologação remota. Os scripts de homologação foram preparados; somente o modo sem conexão foi executado. A condição de habilitação da tarefa 4.5 é respeitada mantendo as escritas desabilitadas.
+Ver `delivery.md`: 227 testes locais, compilação Reflex e validação sintática Xano concluídos. As tarefas 2.2–2.5 têm código local entregue, mas permanecem abertas para não declarar verificação comportamental no Xano sem execução real. A implantação autorizada da tarefa 4.2 foi concluída com escritas desabilitadas; os testes de escrita das tarefas 4.3–4.4 continuam pendentes de autorização e homologação remota. Os scripts de homologação foram preparados; somente o modo sem conexão foi executado. A condição de habilitação da tarefa 4.5 é respeitada mantendo as escritas desabilitadas.

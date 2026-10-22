@@ -20,4 +20,5 @@ query "locacoes/{id}" verb=GET {
   }
   response = $rental
   tags = []
+  guid = "M7R-IzDnnv9sEEDeAlBOlQF17po"
 }

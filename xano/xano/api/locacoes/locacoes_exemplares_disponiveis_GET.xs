@@ -27,4 +27,5 @@ query "locacoes/exemplares-disponiveis" verb=GET {
   }
   response = {items: $available.items, page: $available.curPage, per_page: $input.per_page, total: $available.itemsTotal}
   tags = []
+  guid = "HegZOxqYg_PFUM3_vnfnsOeBMn8"
 }

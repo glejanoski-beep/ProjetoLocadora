@@ -172,11 +172,11 @@ Representa o compromisso operacional de disponibilizar um exemplar a um cliente 
 - Uma locação encerrada deve conservar seus dados e permanecer disponível no histórico.
 - O atraso é determinado comparando o prazo da locação com a devolução efetiva ou, enquanto não houver devolução, com a data de consulta vigente.
 
-#### Incremento local de registro
+#### Incremento de registro
 
 A change `registrar-locacao` mantém uma linha de `rental` por cliente e exemplar, com retirada/vencimento UTC, `status=active`, usuário responsável e chave de operação única por conta. Rótulos de cliente/exemplar/filme são preservados no instante da retirada. `rental_occupancy` mantém exclusividade por exemplar, criada na mesma transação; não substitui nem apaga o histórico. Repetição da mesma conta/chave e conteúdo retorna a locação original. Retirada, status e responsável não são campos editáveis do formulário.
 
-O schema e a integração Reflex são locais; índices, bloqueios e rollback precisam de homologação autorizada em `v1` antes de habilitar escrita. Este recorte não permite encerrar, cancelar, excluir ou alterar prazo de locação e não gera cobrança ou multa. O futuro fluxo de devolução deverá liberar a ocupação e encerrar a locação atomicamente, conservando o registro original.
+O schema e os contratos foram implantados em `v1`, com escritas desabilitadas; a integração Reflex permanece local. Índices, bloqueios e rollback precisam de homologação comportamental autorizada antes de habilitar escrita. Este recorte não permite encerrar, cancelar, excluir ou alterar prazo de locação e não gera cobrança ou multa. O futuro fluxo de devolução deverá liberar a ocupação e encerrar a locação atomicamente, conservando o registro original.
 
 ### Devolução
 

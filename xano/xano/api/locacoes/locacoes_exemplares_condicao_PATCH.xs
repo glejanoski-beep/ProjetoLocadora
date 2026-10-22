@@ -60,4 +60,5 @@ query "locacoes/exemplares/{id}/condicao" verb=PATCH {
   }
   response = {exemplar: $confirmed, audit_succeeded: $audit_succeeded}
   tags = []
+  guid = "lyn1YVo93KWn_EMpqXPWCjv1XSU"
 }

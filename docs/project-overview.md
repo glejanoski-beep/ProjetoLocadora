@@ -145,8 +145,8 @@ Este documento apresenta a visão geral e o escopo atual do produto. Ele não su
 - A implementação de backend, APIs, funções, tabelas e configurações Xano deve ser mantida em `xano/`.
 - Quando houver conflito, uma decisão mais recente e formalmente documentada deve atualizar este overview e indicar qual comportamento passa a ser o vigente.
 
-## 13. Incremento local de registro de locação
+## 13. Incremento de registro de locação
 
-A change `registrar-locacao` acrescenta implementação local de retirada por exemplar, com cliente ativo e sem bloqueio manual, conta interna `member/admin`, retirada gerada pelo servidor, vencimento informado e status inicial `active`. O frontend Reflex possui formulário e confirmação; os contratos Xano declaram histórico, ocupação exclusiva e condição operacional confirmada por administrador. Exemplares sem confirmação permanecem `unverified`, sem disponibilidade presumida.
+A change `registrar-locacao` acrescenta implementação de retirada por exemplar, com cliente ativo e sem bloqueio manual, conta interna `member/admin`, retirada gerada pelo servidor, vencimento informado e status inicial `active`. O frontend Reflex possui formulário e confirmação; os contratos Xano declaram histórico, ocupação exclusiva e condição operacional confirmada por administrador. Exemplares sem confirmação permanecem `unverified`, sem disponibilidade presumida.
 
-Essa entrega ainda depende de implantação e homologação autorizadas no Xano `v1`; as escritas ficam desabilitadas por padrão. Não representa um módulo já disponível na base publicada. Devolução, finanças, histórico integrado ao cadastro do cliente e indicadores operacionais continuam fora deste incremento. Evidências, inventário e pendências estão em `openspec/changes/registrar-locacao/delivery.md`.
+Os recursos de backend foram implantados no Xano `v1`, com variável de escrita explicitamente `false`. A liberação operacional depende de homologação autorizada de integridade; a interface permanece local e desabilitada por padrão. Devolução, finanças, histórico integrado ao cadastro do cliente e indicadores operacionais continuam fora deste incremento. Evidências, inventário e pendências estão em `openspec/changes/registrar-locacao/delivery.md`.

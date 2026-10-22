@@ -11,4 +11,5 @@ table rental_occupancy {
     {type: "btree|unique", field: [{name: "exemplar_id"}]}
     {type: "btree|unique", field: [{name: "rental_id"}]}
   ]
+  guid = "vDxgG8RtuUmgXnPCli16NVEzdHA"
 }
