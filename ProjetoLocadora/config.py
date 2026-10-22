@@ -120,3 +120,45 @@ def get_frontend_base_url() -> str:
     return (
         os.getenv("FRONTEND_BASE_URL") or "http://localhost:3000"
     ).strip().rstrip("/")
+
+
+def get_xano_rental_api_url() -> str:
+    """Base real do grupo de locações; nunca usa outro grupo como fallback."""
+    value = _required_url("XANO_RENTAL_API_URL")
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        port = parsed.port
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+            host_valid = "%" not in host
+        else:
+            ascii_host = host.encode("idna").decode("ascii").rstrip(".")
+            host_valid = bool(ascii_host) and len(ascii_host) <= 253 and all(
+                re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                for label in ascii_host.split(".")
+            )
+            if ascii_host and all(c in "0123456789." for c in ascii_host):
+                ipaddress.IPv4Address(ascii_host)
+        valid = (
+            parsed.scheme == "https" and host_valid
+            and parsed.username is None and parsed.password is None
+            and "?" not in value and "#" not in value and "\\" not in value
+            and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+            and (port is None or port > 0) and not parsed.netloc.endswith(":")
+            and "/locacoes" not in parsed.path
+        )
+    except (ValueError, UnicodeError):
+        valid = False
+    others = (
+        "XANO_AUTH_API_URL", "XANO_CATALOG_API_URL", "XANO_CUSTOMER_API_URL",
+        "XANO_EXEMPLAR_API_URL", "XANO_DASHBOARD_API_URL",
+    )
+    if not valid or any(value == (os.getenv(key) or "").strip().rstrip("/") for key in others):
+        raise RuntimeError("Configure uma base HTTPS independente para o grupo Locações.")
+    return value
+
+
+def rental_writes_enabled() -> bool:
+    """Ativar somente depois da homologação de integridade no Xano."""
+    return os.getenv("XANO_RENTAL_WRITES_ENABLED", "false") == "true"
