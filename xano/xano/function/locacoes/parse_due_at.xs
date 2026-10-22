@@ -8,19 +8,17 @@ function "Locacoes/parse_due_at" {
       error_type = "inputerror"
       error = "Informe vencimento ISO 8601 com horário e offset explícito."
     }
-    var $timezone { value = "UTC" }
-    conditional {
-      if (($input.due_at|strlen) == 25) {
-        var.update $timezone { value = $input.due_at|substr:19:6 }
-      }
-    }
+    // Validar o calendário no relógio informado, sem depender de suporte
+    // do runtime a nomes de timezone numéricos como -03:00.
+    var $calendar_text { value = ($input.due_at|substr:0:19) ~ "Z" }
+    var $calendar_timestamp { value = $calendar_text|to_timestamp }
     var $timestamp { value = $input.due_at|to_timestamp }
     // Roundtrip também recusa datas de calendário normalizadas pelo parser.
-    precondition (($timestamp|format_timestamp:"Y-m-d":"UTC") != "") {
+    precondition (($calendar_timestamp|format_timestamp:"Y-m-d":"UTC") != "") {
       error_type = "inputerror"
       error = "Vencimento inválido."
     }
-    var $local_date { value = ($timestamp|format_timestamp:"Y-m-d":$timezone) ~ "T" ~ ($timestamp|format_timestamp:"H:i:s":$timezone) }
+    var $local_date { value = ($calendar_timestamp|format_timestamp:"Y-m-d":"UTC") ~ "T" ~ ($calendar_timestamp|format_timestamp:"H:i:s":"UTC") }
     precondition ($local_date == ($input.due_at|substr:0:19)) {
       error_type = "inputerror"
       error = "Vencimento inválido."

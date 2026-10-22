@@ -171,4 +171,7 @@ class TestRentalXanoContract(unittest.TestCase):
         source = self.source("function/locacoes/parse_due_at.xs")
         self.assertIn("regex_matches:$input.due_at", source)
         self.assertIn('$local_date == ($input.due_at|substr:0:19)', source)
-        self.assertIn('"H:i:s":$timezone', source)
+        self.assertIn('$calendar_timestamp|format_timestamp:"H:i:s":"UTC"', source)
+        self.assertIn('($input.due_at|substr:0:19) ~ "Z"', source)
+        self.assertIn('$input.due_at|to_timestamp', source)
+        self.assertNotIn("$timezone", source)
