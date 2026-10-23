@@ -11,7 +11,7 @@ query "locacoes/{id}" verb=GET {
     db.get rental {
       field_name = "id"
       field_value = $input.id
-      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title"]
+      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title", "returned_at", "returned_by"]
     } as $rental
     precondition ($rental != null) {
       error_type = "notfound"

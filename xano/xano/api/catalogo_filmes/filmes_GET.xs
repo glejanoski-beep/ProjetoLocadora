@@ -17,11 +17,8 @@ query "catalogo-filmes/filmes" verb=GET {
     } as $role_check
 
     db.query film {
-      where = (
-        ($input.titulo == null || $input.titulo == "" || ($db.film.titulo|to_lower|includes:($input.titulo|to_lower)))
-        && ($input.genero == null || $input.genero == "" || $db.film.genero == $input.genero)
-      )
-      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status"]
+      where = ($input.titulo == null || $input.titulo == "" || $db.film.titulo includes $input.titulo) && ($input.genero == null || $input.genero == "" || $db.film.genero == $input.genero)
+      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status", "capa", "capa_link"]
       return = {type: "list"}
     } as $films
   }

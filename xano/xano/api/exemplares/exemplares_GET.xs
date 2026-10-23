@@ -26,8 +26,16 @@ query "exemplares" verb=GET {
           output = ["id", "titulo"]
         } as $film
 
+        // A copy whose film was removed outside the app must not break the whole listing.
+        var $film_title { value = "Filme removido (#" ~ $exemplar.filme_id ~ ")" }
+        conditional {
+          if ($film != null) {
+            var.update $film_title { value = $film.titulo }
+          }
+        }
+
         var $item {
-          value = {}|set:"id":$exemplar.id|set:"identificador":$exemplar.identificador|set:"filme_id":$film.id|set:"filme_titulo":$film.titulo
+          value = {}|set:"id":$exemplar.id|set:"identificador":$exemplar.identificador|set:"filme_id":$exemplar.filme_id|set:"filme_titulo":$film_title
         }
         var.update $items { value = $items|push:$item }
       }
