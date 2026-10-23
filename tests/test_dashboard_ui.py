@@ -12,16 +12,30 @@ from unittest.mock import patch
 import reflex as rx
 
 from ProjetoLocadora import dashboard
-from ProjetoLocadora.ProjetoLocadora import render_dashboard
+from pathlib import Path
+
+from ProjetoLocadora.ProjetoLocadora import (
+    DASHBOARD_NAV_ITEMS,
+    DASHBOARD_NAV_UPCOMING,
+    dashboard_topbar,
+    render_dashboard,
+)
 from ProjetoLocadora.dashboard_state import DashboardState
 
 
+CSS_PATH = Path(__file__).resolve().parents[1] / "assets" / "dashboard.css"
+
+
 class TestDashboardUI(unittest.TestCase):
-    def view(self, role="admin", status="initial", loading=False, total=0):
+    def view(self, role="admin", status="initial", loading=False, total=0,
+             builder=None):
+        builder = builder or dashboard.render_acervo_summary
         controlled = SimpleNamespace(
             status=status, loading=loading, total_filmes=total,
             total_exemplares=total, generated_at="2026-10-18T15:00:00Z",
             refresh_summary=DashboardState.refresh_summary,
+            load_rentals=DashboardState.load_rentals,
+            load_customers=DashboardState.load_customers,
         )
 
         def literal_condition(condition, yes, no=None):
@@ -35,7 +49,7 @@ class TestDashboardUI(unittest.TestCase):
         ), patch.object(
             dashboard.rx, "cond", side_effect=literal_condition,
         ):
-            return dashboard.render_acervo_summary(role)
+            return builder(role)
 
     def rendered(self, component):
         return re.sub(r"\\u([0-9a-fA-F]{4})", lambda match: chr(int(match[1], 16)), str(component))
@@ -45,30 +59,47 @@ class TestDashboardUI(unittest.TestCase):
         for child in component.children:
             yield from self.nodes(child)
 
-    def test_success_zero_labels_timestamp_and_refresh_binding(self):
+    def test_success_zero_labels_and_real_values(self):
         component = self.view(status="success", total=0)
         rendered = self.rendered(component)
-        for text in ("Total de filmes cadastrados", "Total de exemplares cadastrados",
-                     "Inclui filmes ativos e inativos", "não indica disponibilidade",
-                     "18/10/2026 às 12:00:00", "(horário de Brasília)"):
+        for text in ("Filmes cadastrados", "Exemplares cadastrados",
+                     "Inclui filmes ativos e inativos", "não indica disponibilidade"):
             self.assertIn(text, rendered)
         cards = [node for node in self.nodes(component)
                  if str(getattr(node, "id", "")) in ('dashboard-total-filmes', 'dashboard-total-exemplares')]
         self.assertEqual(len(cards), 2)
         for card in cards:
-            self.assertRegex(str(card), r'size:"7"\},0\)')
+            self.assertRegex(str(card), r'vitrine-dash__value"\},0\)')
+
+    def test_toolbar_has_timestamp_and_refresh_binding(self):
+        component = self.view(status="success", total=0, builder=dashboard.render_summary_toolbar)
+        rendered = self.rendered(component)
+        for text in ("18/10/2026 às 12:00:00", "(horário de Brasília)", "Gerado em"):
+            self.assertIn(text, rendered)
         buttons = [node for node in self.nodes(component) if (getattr(node, "tag", "") or "").endswith("Button")]
         self.assertEqual(len(buttons), 1)
         self.assertEqual(str(buttons[0].disabled), "false")
-        self.assertEqual(buttons[0].event_triggers["on_click"].events[0].handler, DashboardState.refresh_summary)
+        self.assertEqual(
+            [event.handler for event in buttons[0].event_triggers["on_click"].events],
+            [DashboardState.refresh_summary, DashboardState.load_rentals, DashboardState.load_customers],
+        )
+
+    def test_member_has_no_toolbar_or_refresh(self):
+        component = self.view(role="member", status="success", total=7, builder=dashboard.render_summary_toolbar)
+        rendered = self.rendered(component)
+        self.assertNotIn("Atualizar", rendered)
+        self.assertNotIn("Gerado em", rendered)
 
     def test_loading_disables_refresh_and_hides_old_values(self):
         component = self.view(status="success", loading=True, total=76543)
         self.assertIn("Carregando resumo", self.rendered(component))
         self.assertNotIn("76543", self.rendered(component))
         self.assertNotIn("2026-10-18", self.rendered(component))
-        button = next(n for n in self.nodes(component) if (getattr(n, "tag", "") or "").endswith("Button"))
+        toolbar = self.view(status="success", loading=True, total=76543,
+                            builder=dashboard.render_summary_toolbar)
+        button = next(n for n in self.nodes(toolbar) if (getattr(n, "tag", "") or "").endswith("Button"))
         self.assertEqual(str(button.disabled), "true")
+        self.assertNotIn("2026-10-18", self.rendered(toolbar))
         self.assertIn('role:"status"', self.rendered(component))
 
     def test_errors_have_distinct_messages_and_never_show_stale_totals(self):
@@ -91,17 +122,99 @@ class TestDashboardUI(unittest.TestCase):
     def test_member_cannot_see_loaded_totals_or_refresh(self):
         rendered = self.rendered(self.view(role="member", status="success", total=76543))
         self.assertIn("restrito a administradores", rendered)
-        for hidden in ("76543", "Atualizar", "Total de filmes cadastrados", "2026-10-18"):
+        for hidden in ("76543", "Atualizar", "Filmes cadastrados", "2026-10-18"):
             self.assertNotIn(hidden, rendered)
 
-    def test_real_dashboard_keeps_navigation_and_future_indicators(self):
+    def test_real_dashboard_keeps_navigation_logout_and_summary(self):
         # Renderiza as condições reativas reais, sem avaliar uma sessão falsa.
         rendered = self.rendered(render_dashboard())
-        for text in ("Backoffice da locadora", "Sair", "/filmes", "/clientes", "/exemplares",
-                     "Resumo da sessão", "Locações ativas", "Exemplares disponíveis",
-                     "Multas pendentes", "Dados indisponíveis", "dashboard-summary"):
+        for text in ("Visão geral", "Sair", "/filmes", "/clientes", "/exemplares", "/backoffice",
+                     "Atualizar", "dashboard-summary", "CINEBYTE", "Navegação principal"):
             self.assertIn(text, rendered)
-        self.assertEqual(rendered.count("Dados indisponíveis"), 3)
+        self.assertIn("logout", rendered)
+        self.assertNotIn("Backoffice da locadora", rendered)
+        self.assertNotIn("ROTA", rendered)
+
+    def test_unavailable_indicators_are_explicitly_empty(self):
+        rendered = self.rendered(render_dashboard())
+        for identifier in ("dashboard-locacoes-ativas", "dashboard-clientes-total", "dashboard-multas-pendentes"):
+            self.assertIn(identifier, rendered)
+        # 3 cards + 6 subtítulos de painel sem resposta.
+        self.assertEqual(rendered.count("Sem dados ainda"), 9)
+        self.assertEqual(rendered.count("Sem dados ainda · será alimentado pelo histórico real"), 6)
+        for title in ("Movimentação de locações", "Acervo por gênero", "Clientes", "Situação dos clientes",
+                      "Locações vencidas", "Clientes que mais alugam"):
+            self.assertIn(title, rendered)
+        # Nenhum valor ilustrativo dos exemplos da referência.
+        # Como palavra isolada: hashes gerados pelo Reflex podem conter "28".
+        for invented in ("Marina Lopes", "Ação lidera", "8 filmes", "28", "AO VIVO"):
+            self.assertNotRegex(rendered, rf"(?<!\w){re.escape(invented)}(?!\w)")
+
+    def test_navigation_links_only_to_existing_pages_and_marks_upcoming(self):
+        self.assertEqual(
+            [href for _, href in DASHBOARD_NAV_ITEMS],
+            ["/backoffice", "/filmes", "/exemplares", "/clientes", "/locacoes/nova"],
+        )
+        rendered = self.rendered(dashboard_topbar())
+        for label in DASHBOARD_NAV_UPCOMING:
+            self.assertIn(label, rendered)
+        self.assertEqual(rendered.count("Em breve"), len(DASHBOARD_NAV_UPCOMING))
+        self.assertEqual(rendered.count('"aria-disabled":"true"'), len(DASHBOARD_NAV_UPCOMING))
+        self.assertEqual(rendered.count('"aria-current":"page"'), 1)
+        for forbidden in ("/multas", "/relatorios"):
+            self.assertNotIn(forbidden, rendered)
+
+    def test_user_block_uses_session_data_and_translated_roles(self):
+        rendered = self.rendered(dashboard_topbar())
+        for var in ("user_name", "user_role_label", "user_initials"):
+            self.assertIn(var, rendered)
+        self.assertNotIn("color_mode", rendered.lower())
+
+    def test_color_mode_button_removed_from_dashboard_only(self):
+        self.assertNotIn("color_mode", self.rendered(render_dashboard()).lower())
+
+
+class TestDashboardUserPresentation(unittest.TestCase):
+    def test_initials_come_from_real_name(self):
+        for name, expected in (
+            ("Marina Lopes", "ML"),
+            ("  ana  maria  souza ", "AS"),
+            ("joão", "J"),
+            ("", ""),
+            ("   ", ""),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(dashboard.user_initials(name), expected)
+
+    def test_role_label_translation(self):
+        from ProjetoLocadora.ProjetoLocadora import State
+
+        for role, label in (("admin", "Administrador"), ("member", "Funcionário"), ("", "Funcionário")):
+            with self.subTest(role=role):
+                state = State(_reflex_internal_init=True)
+                state._user_role = role
+                self.assertEqual(State.user_role_label.fget(state), label)
+
+
+class TestDashboardStyles(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.css = CSS_PATH.read_text(encoding="utf-8")
+
+    def test_tokens_scope_and_responsiveness(self):
+        for token in ("#07070a", "#dc2638", '"Inter"', '"Space Mono"', ".vitrine-dash",
+                      "border-radius: 24px", "@media (max-width: 1100px)",
+                      "@media (max-width: 640px)", "overflow-x: hidden",
+                      ":focus-visible", "prefers-reduced-motion"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.css)
+
+    def test_css_does_not_leak_to_other_pages(self):
+        selectors = re.findall(r"^([.#a-zA-Z][^{]*)\{", self.css, flags=re.M)
+        for selector in selectors:
+            for part in selector.split(","):
+                with self.subTest(selector=part.strip()):
+                    self.assertIn("vitrine-dash", part)
 
 
 class TestDashboardTimestampPresentation(unittest.TestCase):

@@ -4,7 +4,7 @@ import os
 import json
 import traceback
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -12,6 +12,22 @@ from ProjetoLocadora.config import get_xano_dashboard_api_url
 from ProjetoLocadora.dashboard_client import (
     DashboardErrorCategory, XanoDashboardError, get_dashboard_summary_xano,
 )
+
+
+_FILMS_PATCH = patch(
+    "ProjetoLocadora.dashboard_state.list_films_xano",
+    new_callable=AsyncMock,
+    return_value=[],
+)
+
+
+def setUpModule():
+    # A distribuição por gênero consulta o catálogo; nenhum teste usa a rede.
+    _FILMS_PATCH.start()
+
+
+def tearDownModule():
+    _FILMS_PATCH.stop()
 
 
 INVALID_DASHBOARD_URLS = (
