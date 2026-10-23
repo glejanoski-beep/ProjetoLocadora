@@ -62,3 +62,26 @@ O exemplo de configuração versionado contém somente campos vazios e gate `fal
 O código pode ser revisado em PR de rascunho, mas os critérios de concorrência,
 rollback, permissões e elegibilidade continuam pendentes. Não mesclar como operação
 liberada, habilitar escritas ou arquivar a change antes dessas evidências.
+
+## Revalidação para encerramento — 23/10/2026
+
+O usuário autorizou continuar a conclusão dos testes. O PR #3 permanece aberto,
+em rascunho e sem conflitos com a `main`; não há novos comentários com indicação
+de registros de homologação. A branch foi atualizada por consulta ao remoto e
+continua no mesmo código revisado anteriormente.
+
+Reexecutados: **175 testes principais** e **52 testes adicionais de cadastros**,
+todos aprovados. Permanecem pendentes os mesmos cinco testes específicos de
+Windows. OpenSpec estrito e verificação de whitespace aprovados. A primeira
+invocação do discovery adicional usou top-level incompatível com a estrutura dos
+testes; a descoberta foi corrigida sem mudar arquivos e os 52 testes executaram.
+
+Os seis critérios remotos abertos continuam sem evidência de execução e não
+foram marcados concluídos. Não foi habilitada escrita, confirmada condição de
+exemplar ou registrada locação. A execução com gravação aguarda indicação de
+cliente, três exemplares conferidos, vencimento e segunda conta interna autorizada,
+solicitados ao operador. A autorização para prosseguir já existe; faltam os dados
+operacionais, não uma nova autorização genérica.
+
+A branch e o PR não devem ser encerrados como entrega concluída antes dessas
+verificações de integridade.
