@@ -46,8 +46,12 @@ class TestExemplaresXanoContract(unittest.TestCase):
         self.assertIn('required_role: "member"', source)
         self.assertIn("db.query exemplar", source)
         self.assertIn("db.get film", source)
-        self.assertIn('set:"filme_id":$film.id', source)
-        self.assertIn('set:"filme_titulo":$film.titulo', source)
+        # Filme removido fora do app não derruba a listagem: mantém o id do exemplar
+        # e usa o título real quando o filme existe.
+        self.assertIn('set:"filme_id":$exemplar.filme_id', source)
+        self.assertIn('set:"filme_titulo":$film_title', source)
+        self.assertIn('"Filme removido (#" ~ $exemplar.filme_id ~ ")"', source)
+        self.assertIn("var.update $film_title { value = $film.titulo }", source)
         self.assertIn("response = $items", source)
 
     def test_create_audits_only_resource_metadata_and_returns_partial_status(self):

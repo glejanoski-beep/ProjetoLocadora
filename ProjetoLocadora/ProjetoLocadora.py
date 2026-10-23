@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
-from typing import Any
+import time
+from typing import Any, TypedDict
 
 import reflex as rx
 
 from ProjetoLocadora.dashboard_state import DashboardState
-from ProjetoLocadora.dashboard import render_acervo_summary
+from ProjetoLocadora.dashboard import (
+    customer_list_panel,
+    customer_metric_card,
+    customer_situation_panel,
+    empty_metric_card,
+    genre_panel,
+    movement_panel,
+    overdue_panel,
+    rental_metric_card,
+    top_customers_panel,
+    render_acervo_summary,
+    render_summary_toolbar,
+    user_initials,
+)
 from ProjetoLocadora.locacoes_state import LocacoesState
 from ProjetoLocadora.locacoes_ui import (
     registration as render_rental_registration,
     detail as render_rental_detail,
 )
 from ProjetoLocadora.catalogo_filmes import (
+    CAPA_ACCEPT,
+    CAPA_MAX_BYTES,
     CLASSIFICACOES,
+    STATUS_FILME,
     Filme,
     FilmeCatalogo,
     centavos_para_reais,
+    validar_capa,
     validar_filme,
+    validar_link_capa,
 )
 from ProjetoLocadora.clientes import (
     ClienteDetalhe,
@@ -39,14 +59,18 @@ from ProjetoLocadora.xano_client import (
     create_exemplar_xano,
     get_customer_xano,
     get_film_xano,
+    XanoSessionUnavailable,
     get_me_xano,
     is_authorized_employee,
     list_films_xano,
     list_customers_xano,
     list_exemplares_xano,
     login_xano,
+    remove_film_cover_xano,
     request_password_reset,
+    set_film_cover_link_xano,
     update_film_xano,
+    upload_film_cover_xano,
     update_customer_xano,
     update_password_xano,
     set_customer_manual_block_xano,
@@ -60,10 +84,40 @@ RESET_GENERIC_MESSAGE = (
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
+EXEMPLAR_FILTER_ALL = "Todos os filmes"
+
+
+class ExemplarGrupo(TypedDict):
+    """Exemplares de um filme, para apresentação agrupada."""
+
+    filme_id: int
+    titulo: str
+    detalhe: str
+    count: int
+    unidade: str
+    exemplares: list[Exemplar]
+    opcao: str
+    tom: int
+    pode_adicionar: bool
+    # Mesma capa do catálogo de filmes; vazia mantém o gradiente.
+    capa_url: str
+
+
+class ClienteLinha(ClienteResumo):
+    """Linha da lista: resumo do servidor mais as iniciais para o avatar."""
+
+    iniciais: str
+
+
+# Plano do Xano: 10 requisições a cada 20 s. Leituras reaproveitam auth/me recente.
+SESSION_CHECK_REUSE_SECONDS = 15
+
+
 class State(rx.State):
     """Estado de autenticação do backoffice e sessão do funcionário."""
 
     is_loading: bool = False
+    login_submitting: bool = False
     error_message: str = ""
     password_visible: bool = False
     reset_dialog_open: bool = False
@@ -71,6 +125,9 @@ class State(rx.State):
     _login_email: str = ""
     _login_password: str = ""
     _session_revision: int = 0
+    # Última conferência bem-sucedida de auth/me, presa a esta sessão.
+    _me_verified_at: float = 0.0
+    _me_verified_key: str = ""
     _dashboard_synced_revision: int = 0
     _xano_auth_token: str = ""
     _user_id: str = ""
@@ -91,6 +148,7 @@ class State(rx.State):
     films_success: str = ""
     title_search: str = ""
     genre_filter: str = ""
+    film_status_filter: str = "all"
     form_loading: bool = False
     form_error: str = ""
     form_title: str = ""
@@ -101,6 +159,12 @@ class State(rx.State):
     form_status: str = "active"
     editing_film_id: int = 0
     editing_film: bool = False
+    # Capa do filme em edição: gravada direto no Xano, independente de "Salvar alterações".
+    form_cover_url: str = ""
+    form_cover_link: str = ""
+    cover_loading: bool = False
+    cover_error: str = ""
+    cover_success: str = ""
     customers: list[ClienteResumo] = []
     customers_loading: bool = False
     customers_error: str = ""
@@ -131,9 +195,20 @@ class State(rx.State):
     exemplar_identifier: str = ""
     exemplar_film_selection: str = ""
     exemplar_films: list[Filme] = []
+    # Capa por id do filme, para todos os perfis; não altera a apresentação do member.
+    exemplar_covers: dict[int, str] = {}
     exemplar_films_error: str = ""
     exemplar_form_error: str = ""
     exemplar_form_loading: bool = False
+    exemplar_search: str = ""
+    exemplar_film_filter: str = EXEMPLAR_FILTER_ALL
+    exemplar_dialog_open: bool = False
+
+    @rx.var
+    def visible_films(self) -> list[FilmeCatalogo]:
+        if self.film_status_filter == "all":
+            return self.films
+        return [film for film in self.films if film["status"] == self.film_status_filter]
 
     @rx.var
     def has_films(self) -> bool:
@@ -153,6 +228,98 @@ class State(rx.State):
             f"{film['id']} | {film['titulo']}"
             for film in self.exemplar_films
         ]
+
+    def _exemplar_film_entries(self) -> list[tuple[int, str, Filme | None]]:
+        """Filmes na ordem de exibição: lista de filmes (admin) e, depois, só os com exemplares."""
+        films = {film["id"]: film for film in self.exemplar_films}
+        titles: dict[int, str] = {}
+        for exemplar in self.exemplares:
+            titles.setdefault(exemplar["filme_id"], exemplar["filme_titulo"])
+        entries: list[tuple[int, str, Filme | None]] = [
+            (film["id"], film["titulo"], film) for film in self.exemplar_films
+        ]
+        entries += [
+            (film_id, title, None)
+            for film_id, title in titles.items()
+            if film_id not in films
+        ]
+        return entries
+
+    @rx.var
+    def exemplar_filter_options(self) -> list[str]:
+        return [
+            EXEMPLAR_FILTER_ALL,
+            *[
+                f"{film_id} | {title}"
+                for film_id, title, _ in self._exemplar_film_entries()
+            ],
+        ]
+
+    @rx.var
+    def exemplar_groups(self) -> list[ExemplarGrupo]:
+        search = self.exemplar_search.strip().lower()
+        by_film: dict[int, list[Exemplar]] = {}
+        for exemplar in self.exemplares:
+            by_film.setdefault(exemplar["filme_id"], []).append(exemplar)
+
+        groups: list[ExemplarGrupo] = []
+        for film_id, title, film in self._exemplar_film_entries():
+            option = f"{film_id} | {title}"
+            if self.exemplar_film_filter != EXEMPLAR_FILTER_ALL and (
+                self.exemplar_film_filter != option
+            ):
+                continue
+            items = by_film.get(film_id, [])
+            if search:
+                items = [
+                    item for item in items if search in item["identificador"].lower()
+                ]
+                if not items:
+                    continue
+            groups.append(
+                {
+                    "filme_id": film_id,
+                    "titulo": title,
+                    "detalhe": (
+                        f"{film['genero']} · {film['ano_lancamento']}" if film else ""
+                    ),
+                    "count": len(items),
+                    "unidade": "exemplar" if len(items) == 1 else "exemplares",
+                    "exemplares": items,
+                    "opcao": option,
+                    "tom": film_id % 5,
+                    "pode_adicionar": film is not None,
+                    "capa_url": self.exemplar_covers.get(film_id, ""),
+                }
+            )
+        return groups
+
+    @rx.var
+    def exemplar_summary(self) -> str:
+        total = len(self.exemplares)
+        text = f"{total} {'exemplar' if total == 1 else 'exemplares'}"
+        if self.exemplar_films:
+            film_ids = {film["id"] for film in self.exemplar_films}
+            with_copy = len({item["filme_id"] for item in self.exemplares} & film_ids)
+            films_total = len(film_ids)
+            text += (
+                f" · {with_copy} de {films_total} "
+                f"{'filme' if films_total == 1 else 'filmes'} com cópia"
+            )
+        return text
+
+    @rx.var
+    def customers_view(self) -> list[ClienteLinha]:
+        return [
+            {**customer, "iniciais": user_initials(customer["nome"]) or "?"}
+            for customer in self.customers
+        ]
+
+    @rx.var
+    def customer_detail_initials(self) -> str:
+        if self.customer_detail is None:
+            return ""
+        return user_initials(self.customer_detail["nome"]) or "?"
 
     @rx.var
     def customers_has_previous_page(self) -> bool:
@@ -185,6 +352,14 @@ class State(rx.State):
     @rx.var
     def user_role(self) -> str:
         return self._user_role
+
+    @rx.var
+    def user_role_label(self) -> str:
+        return "Administrador" if self._user_role == "admin" else "Funcionário"
+
+    @rx.var
+    def user_initials(self) -> str:
+        return user_initials(self._user_name)
 
     @rx.var
     def password_input_type(self) -> str:
@@ -224,6 +399,10 @@ class State(rx.State):
 
     def capture_genre_filter(self, value: str) -> None:
         self.genre_filter = value
+
+    def capture_film_status_filter(self, value: str) -> None:
+        if value in ("all", *STATUS_FILME):
+            self.film_status_filter = value
 
     async def apply_film_filters(self):
         self.films_success = ""
@@ -277,7 +456,48 @@ class State(rx.State):
     def capture_exemplar_film_selection(self, value: str) -> None:
         self.exemplar_film_selection = value
 
+    def capture_exemplar_search(self, value: str) -> None:
+        self.exemplar_search = value
+
+    def capture_exemplar_film_filter(self, value: str) -> None:
+        self.exemplar_film_filter = value
+
+    def set_exemplar_dialog_open(self, is_open: bool) -> None:
+        if is_open and self._user_role != "admin":
+            return
+        self.exemplar_dialog_open = is_open
+        self.exemplar_form_error = ""
+        if not is_open:
+            self.exemplar_identifier = ""
+            self.exemplar_film_selection = ""
+
+    def _session_check_key(self) -> str:
+        """Identidade exata da sessão: token, conta, papel e revisão."""
+        if not self._xano_auth_token or not self._user_id:
+            return ""
+        digest = hashlib.sha256(self._xano_auth_token.encode("utf-8")).hexdigest()
+        return f"{digest}:{self._user_id}:{self._user_role}:{self._session_revision}"
+
+    def _mark_session_verified(self) -> None:
+        self._me_verified_key = self._session_check_key()
+        self._me_verified_at = time.monotonic() if self._me_verified_key else 0.0
+
+    def _forget_session_check(self) -> None:
+        self._me_verified_at = 0.0
+        self._me_verified_key = ""
+
+    def _recently_verified(self) -> bool:
+        """Leituras podem reaproveitar um auth/me de até 15 s desta mesma sessão.
+
+        Não substitui a autorização do Xano, que confere token e papel em cada
+        endpoint; escritas sempre fazem uma conferência nova.
+        """
+        key = self._session_check_key()
+        age = time.monotonic() - self._me_verified_at
+        return bool(key) and key == self._me_verified_key and 0 <= age < SESSION_CHECK_REUSE_SECONDS
+
     def _clear_session(self) -> None:
+        self._forget_session_check()
         self._session_revision += 1
         self._login_email = ""
         self._login_password = ""
@@ -300,6 +520,7 @@ class State(rx.State):
         if (self._user_id, self._user_role) != (
             str(me.get("id", "")), str(me.get("role", "")),
         ):
+            self._forget_session_check()
             self._session_revision += 1
         self._user_id = str(me.get("id", ""))
         self._user_name = str(me.get("name", ""))
@@ -315,6 +536,11 @@ class State(rx.State):
         self.form_rent_price = ""
         self.form_status = "active"
         self.editing_film_id = 0
+        self.form_cover_url = ""
+        self.form_cover_link = ""
+        self.cover_loading = False
+        self.cover_error = ""
+        self.cover_success = ""
 
     def _clear_customer_form(self) -> None:
         self.customer_form_error = ""
@@ -358,13 +584,24 @@ class State(rx.State):
         finally:
             self.exemplares_loading = False
 
-        if self._user_role == "admin":
-            self.exemplar_films_error = ""
-            self.exemplar_films = []
-            try:
-                self.exemplar_films = await list_films_xano(self._xano_auth_token)
-            except XanoCatalogError as err:
+        # O catálogo traz as capas para todos; a lista de manutenção (gênero, ano,
+        # filmes sem cópia) continua só para administradores.
+        is_admin = self._user_role == "admin"
+        self.exemplar_films_error = ""
+        self.exemplar_films = []
+        self.exemplar_covers = {}
+        try:
+            films = await list_films_xano(self._xano_auth_token)
+        except XanoCatalogError as err:
+            if is_admin:
                 self.exemplar_films_error = err.user_message
+            # Para member, sem catálogo a lista segue apenas sem capas.
+        else:
+            self.exemplar_covers = {
+                film["id"]: film.get("capa_url", "") for film in films if film.get("capa_url")
+            }
+            if is_admin:
+                self.exemplar_films = films
 
     async def submit_exemplar(self):
         redirect = self._require_exemplar_admin()
@@ -400,6 +637,7 @@ class State(rx.State):
             self.exemplares_success = "Exemplar cadastrado com sucesso."
             self.exemplar_identifier = ""
             self.exemplar_film_selection = ""
+            self.exemplar_dialog_open = False
         finally:
             self.exemplar_form_loading = False
 
@@ -657,8 +895,115 @@ class State(rx.State):
                 film["valor_locacao_centavos"]
             ).removeprefix("R$ ")
             self.form_status = film["status"]
+            self.form_cover_url = film.get("capa_url", "")
+            self.form_cover_link = film.get("capa_link", "")
         finally:
             self.form_loading = False
+
+    async def _cover_redirect(self):
+        """Capa só para administrador com sessão; o Xano confere o papel de novo."""
+        if not self._xano_auth_token:
+            self._clear_session()
+            await self._sync_dashboard_session()
+            return rx.redirect("/login")
+        if self._user_role != "admin":
+            return rx.redirect("/filmes")
+        return None
+
+    def _cover_ready(self) -> bool:
+        if self.cover_loading:
+            return False
+        self.cover_error = ""
+        self.cover_success = ""
+        if not self.editing_film or not self.editing_film_id:
+            self.cover_error = "Carregue o filme antes de alterar a capa."
+            return False
+        return True
+
+    async def upload_film_cover(self, files: list[rx.UploadFile]):
+        redirect = await self._cover_redirect()
+        if redirect is not None:
+            yield redirect
+            return
+        if not self._cover_ready():
+            return
+        if len(files) != 1:
+            self.cover_error = "Selecione uma única imagem para a capa."
+            return
+        # Lê no máximo 1 byte além do limite: arquivo maior é recusado sem carregar tudo.
+        content = await files[0].read(CAPA_MAX_BYTES + 1)
+        try:
+            mime, extension = validar_capa(content)
+        except ValueError as err:
+            self.cover_error = str(err)
+            return
+
+        self.cover_loading = True
+        yield
+        try:
+            film = await upload_film_cover_xano(
+                self._xano_auth_token, self.editing_film_id, content, mime, extension
+            )
+        except XanoCatalogError as err:
+            self.cover_error = err.user_message
+        else:
+            self.form_cover_url = film["capa_url"]
+            self.cover_success = "Capa atualizada."
+        finally:
+            self.cover_loading = False
+
+    async def remove_film_cover(self):
+        redirect = await self._cover_redirect()
+        if redirect is not None:
+            yield redirect
+            return
+        if not self._cover_ready():
+            return
+        self.cover_loading = True
+        yield
+        try:
+            film = await remove_film_cover_xano(self._xano_auth_token, self.editing_film_id)
+        except XanoCatalogError as err:
+            self.cover_error = err.user_message
+        else:
+            self.form_cover_url = film["capa_url"]
+            self.form_cover_link = film["capa_link"]
+            self.cover_success = "Capa removida."
+        finally:
+            self.cover_loading = False
+
+    def capture_cover_link(self, value: str):
+        self.form_cover_link = value
+
+    async def save_film_cover_link(self):
+        redirect = await self._cover_redirect()
+        if redirect is not None:
+            yield redirect
+            return
+        if not self._cover_ready():
+            return
+        try:
+            link = validar_link_capa(self.form_cover_link)
+        except ValueError as err:
+            self.cover_error = str(err)
+            return
+        self.cover_loading = True
+        yield
+        try:
+            film = await set_film_cover_link_xano(self._xano_auth_token, self.editing_film_id, link)
+        except XanoCatalogError as err:
+            self.cover_error = err.user_message
+        else:
+            self.form_cover_url = film["capa_url"]
+            self.form_cover_link = film["capa_link"]
+            self.cover_success = "Link da capa salvo." if link else "Link da capa removido."
+        finally:
+            self.cover_loading = False
+
+    def reject_film_cover(self, rejections: list[dict[str, Any]]):
+        """Recusa do navegador (tipo ou tamanho); nada é enviado ao servidor."""
+        self.cover_success = ""
+        self.cover_error = "A capa deve ser uma imagem JPEG, PNG ou WebP com até 2 MB."
 
     async def submit_film(self):
         if not self._xano_auth_token:
@@ -708,7 +1053,11 @@ class State(rx.State):
             await self._sync_dashboard_session()
             return
 
-        me = await get_me_xano(self._xano_auth_token)
+        try:
+            me = await get_me_xano(self._xano_auth_token)
+        except XanoSessionUnavailable:
+            # Oscilação de rede: manter o token e deixar a pessoa tentar de novo.
+            return
         if not me or not is_authorized_employee(me):
             self._clear_session()
             await self._sync_dashboard_session()
@@ -724,20 +1073,37 @@ class State(rx.State):
             await self._sync_dashboard_session()
             return rx.redirect("/login")
 
-        me = await get_me_xano(self._xano_auth_token)
+        if self._recently_verified():
+            await self._sync_dashboard_session()
+            return None
+
+        try:
+            me = await get_me_xano(self._xano_auth_token)
+        except XanoSessionUnavailable as error:
+            # Sessão não provada inválida: não desconectar por uma falha transitória.
+            if error.retry_after:
+                return rx.toast.error(
+                    "O Xano atingiu o limite de requisições do plano. "
+                    f"Aguarde {error.retry_after} s e atualize a página."
+                )
+            return rx.toast.error(
+                "Não foi possível confirmar sua sessão agora. Atualize a página para tentar novamente."
+            )
         if not me or not is_authorized_employee(me):
             self._clear_session()
             await self._sync_dashboard_session()
             return rx.redirect("/login")
 
         self._set_user(me)
+        self._mark_session_verified()
         await self._sync_dashboard_session()
 
     async def load_dashboard(self):
         redirect = await self.require_session()
         if redirect is not None:
             return redirect
-        return DashboardState.load_summary()
+        # Locações e clientes valem para member e admin; o resumo do acervo segue restrito ao admin.
+        return [DashboardState.load_summary(), DashboardState.load_rentals(), DashboardState.load_customers()]
 
     async def load_new_rental(self):
         redirect = await self.require_session()
@@ -756,7 +1122,14 @@ class State(rx.State):
             return
         self._login_email = str(form_data.get("login", ""))
         self._login_password = str(form_data.get("password", ""))
-        return await self.handle_login()
+        if not self._login_email.strip() or not self._login_password:
+            return await self.handle_login()
+        # Atualiza a interface antes da chamada de rede: o estado só é enviado
+        # ao navegador quando o handler termina, então a consulta ao Xano
+        # roda em um evento encadeado.
+        self.login_submitting = True
+        self.error_message = ""
+        return State.handle_login
 
     async def handle_login(self):
         if self.is_loading:
@@ -779,7 +1152,10 @@ class State(rx.State):
                 self.error_message = GENERIC_AUTH_ERROR
                 return
 
-            me_data = await get_me_xano(auth_data["authToken"])
+            try:
+                me_data = await get_me_xano(auth_data["authToken"])
+            except XanoSessionUnavailable:
+                me_data = None
             if not me_data or not is_authorized_employee(me_data):
                 self._clear_session()
                 await self._sync_dashboard_session()
@@ -789,12 +1165,14 @@ class State(rx.State):
             self._session_revision += 1
             self._xano_auth_token = auth_data["authToken"]
             self._set_user(me_data)
+            self._mark_session_verified()
             await self._sync_dashboard_session()
             return rx.redirect("/backoffice")
         finally:
             password = ""
             self._login_password = ""
             self.is_loading = False
+            self.login_submitting = False
 
     async def logout(self) -> None:
         self._clear_session()
@@ -876,45 +1254,106 @@ class State(rx.State):
         return rx.redirect("/login")
 
 
-def login_corner(position: str) -> rx.Component:
-    """Renderiza uma das cantoneiras decorativas do painel de login."""
+LOGIN_POSTERS = (
+    "01-caligari.JPG",
+    "02-general.png",
+    "03-charade.jpg",
+    "04-hisgirlfriday.jpg",
+    "05-detour.jpg",
+    "06-plan9.jpg",
+    "07-carnival.jpg",
+    "08-kid.jpg",
+    "10-phantom.jpg",
+    "11-sherlockjr.jpg",
+    "12-safetylast.jpg",
+    "13-goldrush.jpg",
+    "14-hauntedhill.jpg",
+    "15-beatthedevil.jpg",
+    "16-hitchhiker.jpeg",
+)
+LOGIN_WALL_TILES = 60
+LOGIN_SUPPORT_ID = "login-support"
+
+
+def login_poster_wall() -> rx.Component:
+    """Parede decorativa de cartazes, inclinada, atrás do painel."""
 
     return rx.box(
-        class_name=f"retro-login__corner retro-login__corner--{position}",
+        rx.box(
+            *[
+                rx.el.img(
+                    src=f"/login-capas/{LOGIN_POSTERS[(index * 4) % len(LOGIN_POSTERS)]}",
+                    alt="",
+                    decoding="async",
+                    class_name="vitrine-login__poster",
+                )
+                for index in range(LOGIN_WALL_TILES)
+            ],
+            class_name="vitrine-login__wall-grid",
+        ),
+        class_name="vitrine-login__wall",
+        aria_hidden="true",
+    )
+
+
+def login_backdrop() -> rx.Component:
+    """Fundo completo: cartazes, camada escura e vinheta."""
+
+    return rx.box(
+        login_poster_wall(),
+        rx.box(class_name="vitrine-login__veil"),
+        rx.box(class_name="vitrine-login__vignette"),
+        class_name="vitrine-login__backdrop",
         aria_hidden="true",
     )
 
 
 def cassette_badge() -> rx.Component:
-    """Marca visual da locadora inspirada em uma fita cassete."""
+    """Marca visual da locadora: botão de reprodução em moldura clara."""
 
     return rx.box(
-        rx.icon("cassette-tape", size=30, stroke_width=1.7),
-        class_name="retro-login__cassette",
+        rx.icon("play", size=18, stroke_width=0, fill="currentColor"),
+        class_name="vitrine-login__logo",
         role="img",
-        aria_label="Fita cassete",
+        aria_label="Logotipo CINEBYTE LOCADORA",
+    )
+
+
+def login_topbar() -> rx.Component:
+    """Identificação da locadora à esquerda e link de ajuda à direita."""
+
+    return rx.el.header(
+        rx.box(
+            cassette_badge(),
+            rx.text(
+                rx.text.span("CINEBYTE", class_name="vitrine-login__brand-name"),
+                rx.text.span(" LOCADORA", class_name="vitrine-login__brand-tag"),
+                class_name="vitrine-login__brand",
+            ),
+            class_name="vitrine-login__identity",
+        ),
+        rx.el.a(
+            "Ajuda",
+            href=f"#{LOGIN_SUPPORT_ID}",
+            class_name="vitrine-login__help",
+        ),
+        class_name="vitrine-login__topbar",
     )
 
 
 def login_header() -> rx.Component:
-    """Cabeçalho de identidade da tela de acesso."""
+    """Título e subtítulo do painel de acesso."""
 
     return rx.el.header(
-        cassette_badge(),
-        rx.text(
-            rx.text.span("CINEBYTE", class_name="retro-login__brand-purple"),
-            rx.text.span(" LOCADORA", class_name="retro-login__brand-warm"),
-            class_name="retro-login__brand",
-        ),
         rx.heading(
-            "ACESSO DO FUNCION\u00c1RIO",
-            class_name="retro-login__title",
+            "Acesso do funcionário",
+            class_name="vitrine-login__title",
         ),
         rx.text(
             "Entre para gerenciar o acervo e os aluguéis.",
-            class_name="retro-login__subtitle",
+            class_name="vitrine-login__subtitle",
         ),
-        class_name="retro-login__header",
+        class_name="vitrine-login__header",
     )
 
 
@@ -924,28 +1363,20 @@ def login_field(
     field_id: str,
     name: str,
     placeholder: str,
-    icon_name: str,
     input_type,
     on_change,
     auto_complete: str,
     trailing: rx.Component | None = None,
 ) -> rx.Component:
-    """Campo reutilizável com label e ícones posicionados."""
+    """Campo reutilizável com label e controle opcional à direita."""
 
     return rx.box(
         rx.el.label(
             label,
             html_for=field_id,
-            class_name="retro-login__label",
+            class_name="vitrine-login__label",
         ),
         rx.box(
-            rx.icon(
-                icon_name,
-                size=18,
-                stroke_width=1.8,
-                class_name="retro-login__field-icon",
-                aria_hidden="true",
-            ),
             rx.el.input(
                 id=field_id,
                 name=name,
@@ -957,15 +1388,15 @@ def login_field(
                 aria_describedby="login-error",
                 aria_invalid=State.error_message != "",
                 class_name=(
-                    "retro-login__input retro-login__input--trailing"
+                    "vitrine-login__input vitrine-login__input--trailing"
                     if trailing is not None
-                    else "retro-login__input"
+                    else "vitrine-login__input"
                 ),
             ),
             trailing if trailing is not None else rx.fragment(),
-            class_name="retro-login__field-shell",
+            class_name="vitrine-login__field-shell",
         ),
-        class_name="retro-login__field",
+        class_name="vitrine-login__field",
     )
 
 
@@ -973,16 +1404,12 @@ def password_visibility_button() -> rx.Component:
     """Controle acessível que alterna a apresentação da senha."""
 
     return rx.button(
-        rx.cond(
-            State.password_visible,
-            rx.icon("eye-off", size=19, stroke_width=1.8),
-            rx.icon("eye", size=19, stroke_width=1.8),
-        ),
+        rx.cond(State.password_visible, "ocultar", "mostrar"),
         type="button",
         on_click=State.toggle_password_visibility,
         aria_label=State.password_toggle_label,
         title=State.password_toggle_label,
-        class_name="retro-login__password-toggle",
+        class_name="vitrine-login__password-toggle",
     )
 
 
@@ -996,16 +1423,16 @@ def login_error_region() -> rx.Component:
                 State.error_message,
                 role="alert",
                 aria_live="assertive",
-                class_name="retro-login__error-text",
+                class_name="vitrine-login__error-text",
             ),
             rx.text(
-                "\u00a0",
+                " ",
                 aria_hidden="true",
-                class_name="retro-login__error-text",
+                class_name="vitrine-login__error-text",
             ),
         ),
         id="login-error",
-        class_name="retro-login__error-slot",
+        class_name="vitrine-login__error-slot",
     )
 
 
@@ -1017,24 +1444,24 @@ def password_recovery_dialog() -> rx.Component:
             rx.button(
                 "Esqueci minha senha",
                 type="button",
-                class_name="retro-login__forgot",
+                class_name="vitrine-login__forgot",
             )
         ),
         rx.dialog.content(
             rx.dialog.title(
-                "RECUPERAR ACESSO",
-                class_name="retro-reset__title",
+                "Recuperar acesso",
+                class_name="vitrine-reset__title",
             ),
             rx.dialog.description(
                 "Informe seu e-mail para receber um link de redefinição.",
-                class_name="retro-reset__description",
+                class_name="vitrine-reset__description",
             ),
             rx.form(
                 rx.box(
                     rx.el.label(
-                        "E-MAIL",
+                        "E-mail",
                         html_for="reset-email",
-                        class_name="retro-login__label",
+                        class_name="vitrine-login__label",
                     ),
                     rx.el.input(
                         id="reset-email",
@@ -1045,9 +1472,9 @@ def password_recovery_dialog() -> rx.Component:
                         required=True,
                         on_change=State.capture_reset_request_email,
                         aria_describedby="reset-message",
-                        class_name="retro-login__input retro-reset__input",
+                        class_name="vitrine-login__input",
                     ),
-                    class_name="retro-login__field",
+                    class_name="vitrine-login__field",
                 ),
                 rx.box(
                     rx.cond(
@@ -1062,21 +1489,21 @@ def password_recovery_dialog() -> rx.Component:
                             aria_live="polite",
                             class_name=rx.cond(
                                 State.reset_message_is_error,
-                                "retro-reset__message retro-reset__message--error",
-                                "retro-reset__message",
+                                "vitrine-reset__message vitrine-reset__message--error",
+                                "vitrine-reset__message",
                             ),
                         ),
-                        rx.text("\u00a0", aria_hidden="true"),
+                        rx.text(" ", aria_hidden="true"),
                     ),
                     id="reset-message",
-                    class_name="retro-reset__message-slot",
+                    class_name="vitrine-reset__message-slot",
                 ),
                 rx.hstack(
                     rx.dialog.close(
                         rx.button(
                             "Cancelar",
                             type="button",
-                            class_name="retro-reset__cancel",
+                            class_name="vitrine-reset__cancel",
                         )
                     ),
                     rx.button(
@@ -1084,16 +1511,16 @@ def password_recovery_dialog() -> rx.Component:
                         type="submit",
                         loading=State.reset_loading,
                         disabled=State.reset_loading,
-                        class_name="retro-reset__submit",
+                        class_name="vitrine-reset__submit",
                     ),
-                    class_name="retro-reset__actions",
+                    class_name="vitrine-reset__actions",
                 ),
                 on_submit=State.submit_reset_link,
                 no_validate=True,
                 reset_on_submit=False,
-                class_name="retro-reset__form",
+                class_name="vitrine-reset__form",
             ),
-            class_name="retro-reset-dialog",
+            class_name="vitrine-reset-dialog",
         ),
         open=State.reset_dialog_open,
         on_open_change=State.set_reset_dialog_open,
@@ -1105,784 +1532,1747 @@ def login_form() -> rx.Component:
 
     return rx.form(
         login_field(
-            label="LOGIN",
+            label="E-mail",
             field_id="login-identifier",
             name="login",
-            placeholder="Digite seu usuário",
-            icon_name="user",
+            placeholder="nome@exemplo.com",
             input_type="email",
             on_change=State.capture_login_email,
             auto_complete="username",
         ),
         login_field(
-            label="SENHA",
+            label="Senha",
             field_id="login-password",
             name="password",
-            placeholder="Digite sua senha",
-            icon_name="lock-keyhole",
+            placeholder="Sua senha",
             input_type=State.password_input_type,
             on_change=State.capture_login_password,
             auto_complete="current-password",
             trailing=password_visibility_button(),
         ),
-        password_recovery_dialog(),
+        rx.box(
+            password_recovery_dialog(),
+            class_name="vitrine-login__options",
+        ),
         login_error_region(),
         rx.button(
-            rx.text("ENTRAR NO SISTEMA", class_name="retro-login__submit-text"),
-            rx.icon("arrow-right", size=18, stroke_width=2.1),
+            rx.cond(
+                State.is_loading | State.login_submitting,
+                rx.fragment(
+                    rx.el.span(class_name="vitrine-login__spinner", aria_hidden="true"),
+                    "Entrando…",
+                ),
+                "Entrar",
+            ),
             type="submit",
-            loading=State.is_loading,
-            disabled=State.is_loading,
+            disabled=State.is_loading | State.login_submitting,
+            aria_busy=State.is_loading | State.login_submitting,
             aria_label="Entrar no sistema",
-            class_name="retro-login__submit",
+            class_name="vitrine-login__submit",
         ),
         on_submit=State.submit_login,
         no_validate=True,
         reset_on_submit=False,
-        class_name="retro-login__form",
+        class_name="vitrine-login__form",
     )
 
 
 def login_footer() -> rx.Component:
-    """Rodapé da área restrita."""
+    """Orientação de suporte, alvo do link Ajuda."""
 
     return rx.el.footer(
-        rx.box(class_name="retro-login__divider", aria_hidden="true"),
         rx.text(
-            "\u00c1REA RESTRITA • VERS\u00c3O 2.4.8",
-            class_name="retro-login__footer-text",
+            "Sem acesso? Fale com o administrador da sua loja.",
+            id=LOGIN_SUPPORT_ID,
+            tab_index=-1,
+            class_name="vitrine-login__support",
         ),
-        class_name="retro-login__footer",
+        class_name="vitrine-login__footer",
     )
 
 
 def login_panel() -> rx.Component:
-    """Painel central completo da tela de login."""
+    """Painel central de vidro com o formulário completo."""
 
     return rx.el.section(
-        login_corner("top-left"),
-        login_corner("top-right"),
-        login_corner("bottom-left"),
-        login_corner("bottom-right"),
         login_header(),
         login_form(),
         login_footer(),
-        class_name="retro-login__panel",
-        aria_label="ACESSO DO FUNCION\u00c1RIO",
+        class_name="vitrine-login__panel",
+        aria_label="Acesso do funcionário",
     )
 
 
 @rx.page(route="/login", on_load=State.restore_session)
 def login_page() -> rx.Component:
     return rx.el.main(
-        rx.box(class_name="retro-login__background", aria_hidden="true"),
+        login_backdrop(),
+        login_topbar(),
         login_panel(),
-        class_name="retro-login",
+        rx.text(
+            "Acesso restrito a funcionários da CINEBYTE LOCADORA",
+            class_name="vitrine-login__legal",
+        ),
+        class_name="vitrine-login",
+    )
+
+
+DASHBOARD_NAV_ITEMS = (
+    ("Visão geral", "/backoffice"),
+    ("Acervo", "/filmes"),
+    ("Exemplares", "/exemplares"),
+    ("Clientes", "/clientes"),
+    ("Locações", "/locacoes/nova"),
+)
+DASHBOARD_NAV_UPCOMING = ("Multas", "Relatórios")
+
+
+def dashboard_nav(active: str = "/backoffice") -> rx.Component:
+    """Navegação horizontal: páginas existentes são links; as demais ficam desabilitadas."""
+
+    return rx.el.nav(
+        *[
+            rx.el.a(
+                label,
+                href=href,
+                aria_current="page" if href == active else None,
+                class_name=(
+                    "vitrine-dash__nav-item vitrine-dash__nav-item--active"
+                    if href == active
+                    else "vitrine-dash__nav-item"
+                ),
+            )
+            for label, href in DASHBOARD_NAV_ITEMS
+        ],
+        *[
+            rx.el.span(
+                label,
+                rx.el.span("Em breve", class_name="vitrine-dash__soon"),
+                aria_disabled="true",
+                class_name="vitrine-dash__nav-item vitrine-dash__nav-item--disabled",
+            )
+            for label in DASHBOARD_NAV_UPCOMING
+        ],
+        aria_label="Navegação principal",
+        class_name="vitrine-dash__nav",
+    )
+
+
+def dashboard_topbar(active: str = "/backoffice") -> rx.Component:
+    """Barra superior: marca CINEBYTE, navegação e identificação do usuário."""
+
+    return rx.el.header(
+        rx.box(
+            rx.box(
+                rx.icon("play", size=18, stroke_width=0, fill="currentColor"),
+                class_name="vitrine-dash__logo",
+                role="img",
+                aria_label="Logotipo CINEBYTE LOCADORA",
+            ),
+            rx.text(
+                rx.text.span("CINEBYTE", class_name="vitrine-dash__brand-name"),
+                rx.text.span(" LOCADORA", class_name="vitrine-dash__brand-tag"),
+                class_name="vitrine-dash__brand",
+            ),
+            class_name="vitrine-dash__identity",
+        ),
+        dashboard_nav(active),
+        rx.box(
+            rx.box(
+                rx.el.span(
+                    rx.cond(State.user_name != "", State.user_name, "Funcionário"),
+                    class_name="vitrine-dash__user-name",
+                ),
+                rx.el.span(
+                    State.user_role_label,
+                    class_name="vitrine-dash__user-role",
+                ),
+                class_name="vitrine-dash__user-text",
+            ),
+            rx.box(
+                rx.cond(
+                    State.user_initials != "",
+                    State.user_initials,
+                    rx.icon("user", size=16, aria_hidden="true"),
+                ),
+                class_name="vitrine-dash__avatar",
+                aria_hidden="true",
+            ),
+            rx.button(
+                "Sair",
+                on_click=State.logout,
+                class_name="vitrine-dash__logout",
+            ),
+            class_name="vitrine-dash__user",
+        ),
+        class_name="vitrine-dash__topbar",
+    )
+
+
+def dashboard_heading() -> rx.Component:
+    """Título da página, contexto do perfil e ações do resumo."""
+
+    return rx.el.section(
+        rx.box(
+            rx.el.h1("Visão geral", class_name="vitrine-dash__title"),
+            rx.el.p(
+                rx.cond(
+                    State.user_role == "admin",
+                    "Painel administrativo · Locadora",
+                    "Painel do funcionário · Locadora",
+                ),
+                class_name="vitrine-dash__subtitle",
+            ),
+            class_name="vitrine-dash__heading-text",
+        ),
+        rx.box(
+            rx.el.span(State.user_email, class_name="vitrine-dash__email"),
+            render_summary_toolbar(State.user_role),
+            class_name="vitrine-dash__heading-side",
+        ),
+        class_name="vitrine-dash__heading",
     )
 
 
 def render_dashboard() -> rx.Component:
-    return rx.container(
-        rx.color_mode.button(position="top-right"),
-        rx.vstack(
-            rx.hstack(
-                rx.vstack(
-                    rx.heading("Backoffice da locadora", size="8"),
-                    rx.cond(
-                        State.user_name != "",
-                        rx.text("Olá, ", State.user_name, " · ", State.user_role, color="gray"),
-                        rx.text("Olá, funcionário · ", State.user_role, color="gray"),
-                    ),
-                    spacing="1",
-                ),
-                rx.button("Sair", on_click=State.logout, size="3"),
-                width="100%",
-                justify="between",
-                align="center",
-            ),
+    return rx.el.main(
+        dashboard_topbar(),
+        dashboard_heading(),
+        rx.box(
             render_acervo_summary(State.user_role),
-            rx.hstack(
-                rx.box(
-                    rx.vstack(
-                        rx.text("Locações ativas", color="gray", size="3"),
-                        rx.heading("—", size="7"),
-                        rx.text("Dados indisponíveis", color="gray", size="2"),
-                        spacing="0",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
-                ),
-                rx.box(
-                    rx.vstack(
-                        rx.text("Exemplares disponíveis", color="gray", size="3"),
-                        rx.heading("—", size="7"),
-                        rx.text("Dados indisponíveis", color="gray", size="2"),
-                        spacing="0",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
-                ),
-                rx.box(
-                    rx.vstack(
-                        rx.text("Multas pendentes", color="gray", size="3"),
-                        rx.heading("—", size="7"),
-                        rx.text("Dados indisponíveis", color="gray", size="2"),
-                        spacing="0",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
-                ),
-                spacing="4",
-                width="100%",
-            ),
-            rx.hstack(
-                rx.box(
-                    rx.vstack(
-                        rx.heading("Resumo da sessão", size="6"),
-                        rx.text("Usuário: ", State.user_name),
-                        rx.text("E-mail: ", State.user_email),
-                        rx.text("Perfil: ", State.user_role),
-                        spacing="2",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
-                ),
-                rx.box(
-                    rx.vstack(
-                        rx.heading("Ações rápidas", size="6"),
-                        rx.text("Os módulos da locadora serão adicionados por etapas.", color="gray"),
-                        spacing="2",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
-                ),
-                spacing="4",
-                width="100%",
-            ),
-            rx.link("Gerenciar catálogo de filmes", href="/filmes"),
-            rx.link("Gerenciar clientes", href="/clientes"),
-            rx.link("Consultar exemplares", href="/exemplares"),
-            rx.link("Registrar locação", href="/locacoes/nova"),
-            spacing="5",
-            min_height="85vh",
+            rental_metric_card(),
+            customer_metric_card(),
+            empty_metric_card("Multas pendentes", "wallet", "dashboard-multas-pendentes"),
+            class_name="vitrine-dash__cards",
+        ),
+        rx.box(
+            movement_panel(),
+            genre_panel(State.user_role),
+            class_name="vitrine-dash__charts",
+        ),
+        rx.box(
+            customer_list_panel(),
+            customer_situation_panel(),
+            class_name="vitrine-dash__charts",
+        ),
+        rx.box(
+            overdue_panel(),
+            top_customers_panel(),
+            class_name="vitrine-dash__charts",
+        ),
+        class_name="vitrine-dash",
+    )
+
+
+def customer_status_badge(status) -> rx.Component:
+    """Situação cadastral (active/inactive), independente do bloqueio manual."""
+
+    return rx.el.span(
+        rx.el.span(class_name="vitrine-clientes__dot", aria_hidden="true"),
+        rx.cond(status == "active", "Ativo", "Inativo"),
+        class_name=rx.cond(
+            status == "active",
+            "vitrine-clientes__badge vitrine-clientes__badge--active",
+            "vitrine-clientes__badge",
         ),
     )
 
 
-def render_customer_card(customer: ClienteResumo) -> rx.Component:
-    return rx.box(
-        rx.hstack(
-            rx.vstack(
-                rx.heading(customer["nome"], size="5"),
-                rx.text(customer["cpf_mascarado"], color="gray"),
-                rx.text(
-                    rx.cond(customer["status"] == "active", "Ativo", "Inativo"),
-                    " · ",
-                    rx.cond(
-                        customer["bloqueio_manual_ativo"],
-                        "Bloqueio manual ativo",
-                        "Sem bloqueio manual",
-                    ),
-                ),
-                spacing="1",
-                align="start",
-            ),
-            rx.link("Consultar", href=f"/clientes/{customer['id']}"),
-            width="100%",
-            justify="between",
-            align="center",
+def customer_block_badge(blocked, *, short: bool = False) -> rx.Component:
+    """Bloqueio manual, condição separada da situação cadastral."""
+
+    return rx.el.span(
+        rx.el.span(class_name="vitrine-clientes__dot", aria_hidden="true"),
+        rx.cond(
+            blocked,
+            "Bloqueado" if short else "Bloqueio manual ativo",
+            "Sem bloqueio" if short else "Sem bloqueio manual",
         ),
-        padding="1rem",
-        border="1px solid #e5e7eb",
-        border_radius="12px",
-        width="100%",
+        class_name=rx.cond(
+            blocked,
+            "vitrine-clientes__badge vitrine-clientes__badge--blocked",
+            "vitrine-clientes__badge",
+        ),
+    )
+
+
+def render_customer_card(customer: ClienteLinha) -> rx.Component:
+    """Linha da tabela: somente os campos do resumo; sem contato na listagem."""
+
+    return rx.el.tr(
+        rx.el.td(
+            rx.box(
+                rx.el.span(
+                    customer["iniciais"],
+                    class_name="vitrine-clientes__avatar",
+                    aria_hidden="true",
+                ),
+                rx.el.span(customer["nome"], class_name="vitrine-clientes__name"),
+                class_name="vitrine-clientes__person",
+            ),
+            data_label="Cliente",
+        ),
+        rx.el.td(
+            rx.el.span(customer["cpf_mascarado"], class_name="vitrine-clientes__mono"),
+            data_label="CPF",
+        ),
+        rx.el.td(customer_status_badge(customer["status"]), data_label="Situação"),
+        rx.el.td(
+            customer_block_badge(customer["bloqueio_manual_ativo"], short=True),
+            data_label="Bloqueio manual",
+        ),
+        rx.el.td(
+            rx.el.a(
+                "Consultar",
+                rx.icon("arrow-right", size=16, stroke_width=1.8, aria_hidden="true"),
+                href=f"/clientes/{customer['id']}",
+                aria_label="Consultar " + customer["nome"],
+                class_name="vitrine-clientes__consult",
+            ),
+            class_name="vitrine-clientes__action",
+        ),
+    )
+
+
+def customers_filters() -> rx.Component:
+    return rx.box(
+        rx.box(
+            rx.icon("search", size=18, stroke_width=1.8, aria_hidden="true"),
+            rx.el.input(
+                placeholder="Buscar por nome",
+                value=State.customer_name_search,
+                on_change=State.capture_customer_name_search,
+                aria_label="Buscar cliente por nome",
+                class_name="vitrine-clientes__input vitrine-clientes__input--icon",
+            ),
+            class_name="vitrine-clientes__search",
+        ),
+        rx.box(
+            rx.icon("credit-card", size=18, stroke_width=1.8, aria_hidden="true"),
+            rx.el.input(
+                placeholder="CPF completo",
+                value=State.customer_cpf_search,
+                on_change=State.capture_customer_cpf_search,
+                aria_label="Buscar cliente por CPF completo",
+                class_name="vitrine-clientes__input vitrine-clientes__input--icon",
+            ),
+            class_name="vitrine-clientes__search",
+        ),
+        rx.el.button(
+            "Buscar",
+            type="button",
+            on_click=State.apply_customer_filters,
+            class_name="vitrine-clientes__search-button",
+        ),
+        rx.el.span(
+            State.customers_total,
+            rx.cond(State.customers_total == 1, " cliente", " clientes"),
+            class_name="vitrine-clientes__count",
+            aria_live="polite",
+        ),
+        class_name="vitrine-clientes__filters",
     )
 
 
 def render_customers_page() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.hstack(
-                rx.heading("Clientes", size="8"),
-                rx.cond(
-                    State.user_role == "admin",
-                    rx.link("Cadastrar cliente", href="/clientes/novo"),
-                ),
-                width="100%",
-                justify="between",
-                align="center",
+    return rx.el.main(
+        dashboard_topbar("/clientes"),
+        rx.el.section(
+            rx.box(
+                rx.el.span("CADASTRO", class_name="vitrine-clientes__eyebrow"),
+                rx.el.h1("Clientes", class_name="vitrine-dash__title"),
+                class_name="vitrine-dash__heading-text",
             ),
-            rx.link("Voltar ao backoffice", href="/backoffice"),
             rx.cond(
-                State.customers_success != "",
-                rx.callout(State.customers_success, color_scheme="green", role="status"),
+                State.user_role == "admin",
+                rx.el.a(
+                    rx.icon("plus", size=18, stroke_width=2, aria_hidden="true"),
+                    "Cadastrar cliente",
+                    href="/clientes/novo",
+                    class_name="vitrine-clientes__primary",
+                ),
             ),
-            rx.hstack(
-                rx.input(
-                    placeholder="Buscar por nome",
-                    value=State.customer_name_search,
-                    on_change=State.capture_customer_name_search,
-                    aria_label="Buscar cliente por nome",
-                ),
-                rx.input(
-                    placeholder="CPF completo",
-                    value=State.customer_cpf_search,
-                    on_change=State.capture_customer_cpf_search,
-                    aria_label="Buscar cliente por CPF completo",
-                ),
-                rx.button("Buscar", on_click=State.apply_customer_filters),
-                width="100%",
+            class_name="vitrine-dash__heading",
+        ),
+        rx.cond(
+            State.customers_success != "",
+            rx.box(
+                State.customers_success,
+                role="status",
+                class_name="vitrine-dash__notice vitrine-dash__notice--success",
+            ),
+        ),
+        customers_filters(),
+        rx.cond(
+            State.customers_error != "",
+            rx.box(
+                State.customers_error,
+                role="alert",
+                class_name="vitrine-dash__notice vitrine-dash__notice--error",
+            ),
+        ),
+        rx.cond(
+            State.customers_loading,
+            rx.box(
+                rx.spinner(),
+                rx.text("Carregando clientes…"),
+                role="status",
+                aria_live="polite",
+                class_name="vitrine-dash__notice vitrine-dash__notice--loading",
             ),
             rx.cond(
                 State.customers_error != "",
-                rx.callout(State.customers_error, color_scheme="red", role="alert"),
-            ),
-            rx.cond(
-                State.customers_loading,
-                rx.spinner(),
+                rx.fragment(),
                 rx.cond(
-                    State.customers_error != "",
-                    rx.fragment(),
-                    rx.cond(
-                        State.has_customers,
-                        rx.vstack(
-                            rx.foreach(State.customers, render_customer_card),
-                            width="100%",
-                            align="stretch",
+                    State.has_customers,
+                    rx.box(
+                        rx.el.table(
+                            rx.el.thead(
+                                rx.el.tr(
+                                    rx.el.th("Cliente"),
+                                    rx.el.th("CPF"),
+                                    rx.el.th("Situação"),
+                                    rx.el.th("Bloqueio manual"),
+                                    rx.el.th(
+                                        rx.el.span("Ações", class_name="vitrine-clientes__sr"),
+                                    ),
+                                ),
+                            ),
+                            rx.el.tbody(rx.foreach(State.customers_view, render_customer_card)),
+                            class_name="vitrine-clientes__table",
                         ),
-                        rx.text("Nenhum cliente encontrado.", color="gray"),
+                        class_name="vitrine-clientes__table-wrap",
                     ),
+                    rx.el.p("Nenhum cliente encontrado.", class_name="vitrine-clientes__empty"),
                 ),
             ),
-            rx.hstack(
-                rx.button(
-                    "Anterior",
-                    on_click=State.previous_customers_page,
-                    disabled=~State.customers_has_previous_page,
-                    variant="outline",
-                ),
-                rx.text("Página ", State.customers_page, " · ", State.customers_total, " cliente(s)"),
-                rx.button(
-                    "Próxima",
-                    on_click=State.next_customers_page,
-                    disabled=~State.customers_has_next_page,
-                    variant="outline",
-                ),
-                width="100%",
-                justify="between",
-                align="center",
-            ),
-            spacing="4",
-            width="100%",
-            align="stretch",
         ),
-        max_width="60rem",
-        padding_y="2rem",
+        rx.box(
+            rx.el.button(
+                "Anterior",
+                type="button",
+                on_click=State.previous_customers_page,
+                disabled=~State.customers_has_previous_page,
+                class_name="vitrine-clientes__page-button",
+            ),
+            rx.el.span(
+                "Página ",
+                State.customers_page,
+                " · ",
+                State.customers_total,
+                " cliente(s)",
+                class_name="vitrine-clientes__page-info",
+            ),
+            rx.el.button(
+                "Próxima",
+                type="button",
+                on_click=State.next_customers_page,
+                disabled=~State.customers_has_next_page,
+                class_name="vitrine-clientes__page-button",
+            ),
+            class_name="vitrine-clientes__pager",
+        ),
+        class_name="vitrine-dash vitrine-clientes",
+    )
+
+
+def customer_field(label: str, field_id: str, control: rx.Component) -> rx.Component:
+    return rx.box(
+        rx.el.label(label, html_for=field_id, class_name="vitrine-clientes__label"),
+        control,
+        class_name="vitrine-clientes__field",
+    )
+
+
+def customer_status_picker() -> rx.Component:
+    """Situação cadastral na edição: active/inactive, sem exclusão."""
+
+    return rx.cond(
+        State.editing_customer,
+        rx.box(
+            rx.el.span("Situação cadastral", class_name="vitrine-clientes__label"),
+            rx.box(
+                *[
+                    rx.el.button(
+                        label,
+                        type="button",
+                        on_click=State.capture_customer_status(value),
+                        aria_pressed=State.customer_form_status == value,
+                        class_name=rx.cond(
+                            State.customer_form_status == value,
+                            "vitrine-clientes__seg vitrine-clientes__seg--on",
+                            "vitrine-clientes__seg",
+                        ),
+                    )
+                    for value, label in (("active", "Ativo"), ("inactive", "Inativo"))
+                ],
+                role="group",
+                aria_label="Situação cadastral do cliente",
+                class_name="vitrine-clientes__segmented",
+            ),
+            class_name="vitrine-clientes__field",
+        ),
     )
 
 
 def render_customer_form() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.heading(
-                rx.cond(State.editing_customer, "Editar cliente", "Cadastrar cliente"),
-                size="8",
+    return rx.el.main(
+        dashboard_topbar("/clientes"),
+        rx.el.section(
+            rx.box(
+                rx.box(
+                    rx.el.h1(
+                        rx.cond(State.editing_customer, "Editar cliente", "Cadastrar cliente"),
+                        class_name="vitrine-clientes__form-title",
+                    ),
+                    rx.el.p(
+                        rx.cond(
+                            State.editing_customer,
+                            "Altere os dados cadastrais do cliente.",
+                            "Preencha os dados cadastrais do cliente.",
+                        ),
+                        class_name="vitrine-clientes__form-sub",
+                    ),
+                ),
+                rx.el.a(
+                    rx.icon("x", size=18, stroke_width=1.8, aria_hidden="true"),
+                    href="/clientes",
+                    aria_label="Voltar aos clientes",
+                    title="Voltar aos clientes",
+                    class_name="vitrine-clientes__close",
+                ),
+                class_name="vitrine-clientes__form-head",
             ),
-            rx.link("Voltar aos clientes", href="/clientes"),
             rx.cond(
                 State.customer_form_error != "",
-                rx.callout(State.customer_form_error, color_scheme="red", role="alert"),
-            ),
-            rx.input(
-                placeholder="Nome completo",
-                value=State.customer_form_name,
-                on_change=State.capture_customer_name,
-                max_length=200,
-                required=True,
-                aria_label="Nome completo do cliente",
-            ),
-            rx.input(
-                placeholder="CPF",
-                value=State.customer_form_cpf,
-                on_change=State.capture_customer_cpf,
-                required=True,
-                aria_label="CPF do cliente",
-            ),
-            rx.input(
-                placeholder="E-mail",
-                type="email",
-                value=State.customer_form_email,
-                on_change=State.capture_customer_email,
-                max_length=254,
-                aria_label="E-mail do cliente",
-            ),
-            rx.input(
-                placeholder="Telefone",
-                value=State.customer_form_phone,
-                on_change=State.capture_customer_phone,
-                aria_label="Telefone do cliente",
-            ),
-            rx.text("Informe ao menos um contato: e-mail ou telefone.", color="gray", size="2"),
-            rx.cond(
-                State.editing_customer,
-                rx.select(
-                    ["active", "inactive"],
-                    value=State.customer_form_status,
-                    on_change=State.capture_customer_status,
-                    required=True,
-                    aria_label="Situação cadastral do cliente",
+                rx.box(
+                    State.customer_form_error,
+                    role="alert",
+                    class_name="vitrine-dash__notice vitrine-dash__notice--error",
                 ),
             ),
-            rx.button(
-                "Salvar cliente",
-                on_click=State.submit_customer,
-                loading=State.customer_form_loading,
-                disabled=State.editing_customer & (State.editing_customer_id == 0),
-                width="100%",
+            customer_field(
+                "Nome completo",
+                "customer-name",
+                rx.el.input(
+                    id="customer-name",
+                    placeholder="Nome completo",
+                    value=State.customer_form_name,
+                    on_change=State.capture_customer_name,
+                    max_length=200,
+                    required=True,
+                    aria_label="Nome completo do cliente",
+                    class_name="vitrine-clientes__input",
+                ),
             ),
-            spacing="4",
-            align="stretch",
-            width="100%",
+            customer_field(
+                "CPF",
+                "customer-cpf",
+                rx.el.input(
+                    id="customer-cpf",
+                    placeholder="CPF",
+                    value=State.customer_form_cpf,
+                    on_change=State.capture_customer_cpf,
+                    required=True,
+                    aria_label="CPF do cliente",
+                    class_name="vitrine-clientes__input vitrine-clientes__mono",
+                ),
+            ),
+            rx.box(
+                customer_field(
+                    "E-mail",
+                    "customer-email",
+                    rx.el.input(
+                        id="customer-email",
+                        placeholder="E-mail",
+                        type="email",
+                        value=State.customer_form_email,
+                        on_change=State.capture_customer_email,
+                        max_length=254,
+                        aria_label="E-mail do cliente",
+                        class_name="vitrine-clientes__input",
+                    ),
+                ),
+                customer_field(
+                    "Telefone",
+                    "customer-phone",
+                    rx.el.input(
+                        id="customer-phone",
+                        placeholder="Telefone",
+                        value=State.customer_form_phone,
+                        on_change=State.capture_customer_phone,
+                        aria_label="Telefone do cliente",
+                        class_name="vitrine-clientes__input",
+                    ),
+                ),
+                class_name="vitrine-clientes__row",
+            ),
+            rx.box(
+                rx.icon("info", size=16, stroke_width=1.8, aria_hidden="true"),
+                rx.el.span("Informe ao menos um contato: e-mail ou telefone."),
+                class_name="vitrine-clientes__hint",
+            ),
+            customer_status_picker(),
+            rx.box(
+                rx.el.a("Cancelar", href="/clientes", class_name="vitrine-clientes__cancel"),
+                rx.button(
+                    "Salvar cliente",
+                    on_click=State.submit_customer,
+                    loading=State.customer_form_loading,
+                    disabled=State.editing_customer & (State.editing_customer_id == 0),
+                    class_name="vitrine-clientes__primary",
+                ),
+                class_name="vitrine-clientes__form-actions",
+            ),
+            class_name="vitrine-clientes__form-card",
         ),
-        max_width="36rem",
-        padding_y="2rem",
+        class_name="vitrine-dash vitrine-clientes vitrine-clientes--form",
+    )
+
+
+def customer_data_item(label: str, icon_name: str, value) -> rx.Component:
+    return rx.box(
+        rx.box(
+            rx.icon(icon_name, size=18, stroke_width=1.6, aria_hidden="true"),
+            class_name="vitrine-clientes__data-icon",
+        ),
+        rx.box(
+            rx.el.span(label, class_name="vitrine-clientes__data-label"),
+            rx.el.span(value, class_name="vitrine-clientes__data-value"),
+        ),
+        class_name="vitrine-clientes__data-item",
+    )
+
+
+def customer_history_panel() -> rx.Component:
+    """Histórico e pendências: aguardam locações, multas e pagamentos (sem dados)."""
+
+    return rx.el.section(
+        rx.box(
+            rx.el.h2("Histórico e pendências", class_name="vitrine-clientes__panel-title"),
+            rx.box(
+                *[
+                    rx.el.span(
+                        label,
+                        rx.el.span("Em breve", class_name="vitrine-dash__soon"),
+                        aria_disabled="true",
+                        class_name="vitrine-clientes__tab",
+                    )
+                    for label in ("Locações", "Multas", "Pagamentos")
+                ],
+                class_name="vitrine-clientes__tabs",
+            ),
+            class_name="vitrine-clientes__panel-head",
+        ),
+        rx.box(
+            rx.icon("clock", size=22, stroke_width=1.6, aria_hidden="true"),
+            rx.el.h3("Histórico em construção", class_name="vitrine-clientes__empty-title"),
+            rx.el.p(
+                "Aguardando implementação das capacidades de locações, multas e pagamentos. "
+                "Nenhum saldo ou histórico financeiro é apresentado nesta versão.",
+                class_name="vitrine-clientes__empty-text",
+            ),
+            class_name="vitrine-clientes__placeholder",
+        ),
+        class_name="vitrine-clientes__panel",
+        aria_label="Histórico e pendências",
+    )
+
+
+def customer_block_panel() -> rx.Component:
+    """Bloqueio manual (admin): mesmo handler, motivo obrigatório para aplicar."""
+
+    blocked = State.customer_detail["bloqueio_manual_ativo"]
+    return rx.el.section(
+        rx.box(
+            rx.icon("shield", size=20, stroke_width=1.6, aria_hidden="true"),
+            class_name="vitrine-clientes__shield",
+        ),
+        rx.el.h2("Controle de bloqueio manual", class_name="vitrine-clientes__panel-title"),
+        rx.el.p(
+            "Marca o cliente como inelegível para futuras locações até o bloqueio ser removido. "
+            "O motivo fica registrado no cadastro.",
+            class_name="vitrine-clientes__panel-sub",
+        ),
+        rx.box(
+            rx.el.span("Situação atual"),
+            customer_block_badge(blocked, short=False),
+            class_name="vitrine-clientes__block-state",
+        ),
+        rx.cond(
+            blocked,
+            rx.box(
+                rx.el.span("Motivo", class_name="vitrine-clientes__label"),
+                rx.el.p(
+                    State.customer_detail["motivo_bloqueio_manual"],
+                    class_name="vitrine-clientes__reason",
+                ),
+                class_name="vitrine-clientes__field",
+            ),
+            rx.box(
+                rx.el.label(
+                    "Motivo",
+                    html_for="customer-block-reason",
+                    class_name="vitrine-clientes__label",
+                ),
+                rx.el.textarea(
+                    id="customer-block-reason",
+                    placeholder="Obrigatório. Informe o motivo do bloqueio.",
+                    value=State.customer_block_reason,
+                    on_change=State.capture_customer_block_reason,
+                    max_length=500,
+                    aria_label="Motivo do bloqueio manual",
+                    class_name="vitrine-clientes__input vitrine-clientes__textarea",
+                ),
+                class_name="vitrine-clientes__field",
+            ),
+        ),
+        rx.button(
+            rx.cond(blocked, "Remover bloqueio manual", "Aplicar bloqueio manual"),
+            on_click=State.toggle_customer_manual_block,
+            loading=State.customer_block_loading,
+            class_name=rx.cond(
+                blocked,
+                "vitrine-clientes__primary vitrine-clientes__primary--neutral",
+                "vitrine-clientes__primary",
+            ),
+        ),
+        rx.cond(
+            ~blocked,
+            rx.el.p(
+                "O bloqueio é registrado em nome de ",
+                State.user_name,
+                ".",
+                class_name="vitrine-clientes__footnote",
+            ),
+        ),
+        class_name="vitrine-clientes__panel vitrine-clientes__panel--block",
+        aria_label="Controle de bloqueio manual",
     )
 
 
 def render_customer_detail() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.link("Voltar aos clientes", href="/clientes"),
-            rx.cond(
-                State.customer_detail_error != "",
-                rx.callout(State.customer_detail_error, color_scheme="red", role="alert"),
+    detail = State.customer_detail
+    return rx.el.main(
+        dashboard_topbar("/clientes"),
+        rx.el.a(
+            rx.icon("arrow-left", size=16, stroke_width=1.8, aria_hidden="true"),
+            "Voltar aos clientes",
+            href="/clientes",
+            class_name="vitrine-clientes__back",
+        ),
+        rx.cond(
+            State.customer_detail_error != "",
+            rx.box(
+                State.customer_detail_error,
+                role="alert",
+                class_name="vitrine-dash__notice vitrine-dash__notice--error",
             ),
-            rx.cond(
-                State.customers_success != "",
-                rx.callout(State.customers_success, color_scheme="green", role="status"),
+        ),
+        rx.cond(
+            State.customers_success != "",
+            rx.box(
+                State.customers_success,
+                role="status",
+                class_name="vitrine-dash__notice vitrine-dash__notice--success",
             ),
-            rx.cond(
-                State.customer_detail_loading,
+        ),
+        rx.cond(
+            State.customer_detail_loading,
+            rx.box(
                 rx.spinner(),
-                rx.cond(
-                    State.customer_detail_loaded,
-                    rx.vstack(
-                        rx.hstack(
-                            rx.heading(State.customer_detail["nome"], size="8"),
-                            rx.cond(
-                                State.user_role == "admin",
-                                rx.link(
-                                    "Editar cadastro",
-                                    href=f"/clientes/{State.customer_detail['id']}/editar",
-                                ),
-                            ),
-                            width="100%",
-                            justify="between",
-                            align="center",
-                        ),
+                rx.text("Carregando cliente…"),
+                role="status",
+                aria_live="polite",
+                class_name="vitrine-dash__notice vitrine-dash__notice--loading",
+            ),
+            rx.cond(
+                State.customer_detail_loaded,
+                rx.fragment(
+                    rx.el.section(
                         rx.box(
-                            rx.vstack(
-                                rx.text("CPF: ", State.customer_detail["cpf"]),
-                                rx.text("E-mail: ", State.customer_detail["email"]),
-                                rx.text("Telefone: ", State.customer_detail["telefone"]),
-                                rx.text(
-                                    "Situação: ",
-                                    rx.cond(State.customer_detail["status"] == "active", "Ativo", "Inativo"),
-                                ),
-                                rx.text(
-                                    "Bloqueio manual: ",
-                                    rx.cond(
-                                        State.customer_detail["bloqueio_manual_ativo"],
-                                        "Ativo",
-                                        "Não aplicado",
-                                    ),
-                                ),
-                                rx.cond(
-                                    State.customer_detail["bloqueio_manual_ativo"],
-                                    rx.text("Motivo: ", State.customer_detail["motivo_bloqueio_manual"]),
-                                ),
-                                align="start",
-                                spacing="2",
+                            rx.el.span(
+                                State.customer_detail_initials,
+                                class_name="vitrine-clientes__avatar vitrine-clientes__avatar--lg",
+                                aria_hidden="true",
                             ),
-                            padding="1.5rem",
-                            border="1px solid #e5e7eb",
-                            border_radius="12px",
-                            width="100%",
+                            rx.box(
+                                rx.el.h1(detail["nome"], class_name="vitrine-dash__title"),
+                                rx.box(
+                                    customer_status_badge(detail["status"]),
+                                    customer_block_badge(detail["bloqueio_manual_ativo"]),
+                                    class_name="vitrine-clientes__badges",
+                                ),
+                            ),
+                            class_name="vitrine-clientes__person vitrine-clientes__person--lg",
                         ),
                         rx.cond(
                             State.user_role == "admin",
-                            rx.box(
-                                rx.vstack(
-                                    rx.heading("Controle de bloqueio manual", size="5"),
-                                    rx.cond(
-                                        ~State.customer_detail["bloqueio_manual_ativo"],
-                                        rx.input(
-                                            placeholder="Motivo obrigatório",
-                                            value=State.customer_block_reason,
-                                            on_change=State.capture_customer_block_reason,
-                                            max_length=500,
-                                            aria_label="Motivo do bloqueio manual",
-                                        ),
-                                    ),
-                                    rx.button(
-                                        rx.cond(
-                                            State.customer_detail["bloqueio_manual_ativo"],
-                                            "Remover bloqueio manual",
-                                            "Aplicar bloqueio manual",
-                                        ),
-                                        on_click=State.toggle_customer_manual_block,
-                                        loading=State.customer_block_loading,
-                                        color_scheme=rx.cond(
-                                            State.customer_detail["bloqueio_manual_ativo"],
-                                            "green",
-                                            "red",
-                                        ),
-                                    ),
-                                    align="stretch",
-                                    spacing="3",
-                                ),
-                                padding="1.5rem",
-                                border="1px solid #e5e7eb",
-                                border_radius="12px",
-                                width="100%",
+                            rx.el.a(
+                                rx.icon("pencil", size=16, stroke_width=1.8, aria_hidden="true"),
+                                "Editar cadastro",
+                                href=f"/clientes/{detail['id']}/editar",
+                                class_name="vitrine-clientes__secondary",
                             ),
                         ),
-                        rx.box(
-                            rx.vstack(
-                                rx.heading("Histórico e pendências", size="5"),
-                                rx.text(
-                                    "Aguardando implementação das capacidades de locações, multas e pagamentos. Nenhum saldo ou histórico financeiro é apresentado nesta versão.",
-                                    color="gray",
-                                ),
-                                align="start",
-                                spacing="2",
-                            ),
-                            padding="1.5rem",
-                            border="1px solid #e5e7eb",
-                            border_radius="12px",
-                            width="100%",
-                        ),
-                        spacing="4",
-                        width="100%",
-                        align="stretch",
+                        class_name="vitrine-dash__heading",
                     ),
-                    rx.fragment(),
+                    rx.box(
+                        rx.box(
+                            rx.el.section(
+                                rx.el.h2("Dados do cliente", class_name="vitrine-clientes__panel-title"),
+                                rx.box(
+                                    customer_data_item("CPF", "credit-card", detail["cpf"]),
+                                    customer_data_item(
+                                        "E-mail",
+                                        "mail",
+                                        rx.cond(detail["email"], detail["email"], "Não informado"),
+                                    ),
+                                    customer_data_item(
+                                        "Telefone",
+                                        "smartphone",
+                                        rx.cond(detail["telefone"], detail["telefone"], "Não informado"),
+                                    ),
+                                    customer_data_item(
+                                        "Situação",
+                                        "user",
+                                        rx.cond(detail["status"] == "active", "Ativo", "Inativo"),
+                                    ),
+                                    customer_data_item(
+                                        "Bloqueio manual",
+                                        "shield",
+                                        rx.cond(
+                                            detail["bloqueio_manual_ativo"],
+                                            "Ativo",
+                                            "Não aplicado",
+                                        ),
+                                    ),
+                                    class_name="vitrine-clientes__data-grid",
+                                ),
+                                rx.cond(
+                                    detail["bloqueio_manual_ativo"],
+                                    rx.el.p(
+                                        "Motivo: ",
+                                        detail["motivo_bloqueio_manual"],
+                                        class_name="vitrine-clientes__reason",
+                                    ),
+                                ),
+                                class_name="vitrine-clientes__panel",
+                                aria_label="Dados do cliente",
+                            ),
+                            customer_history_panel(),
+                            class_name="vitrine-clientes__main-col",
+                        ),
+                        rx.cond(State.user_role == "admin", customer_block_panel()),
+                        class_name="vitrine-clientes__detail-grid",
+                    ),
                 ),
+                rx.fragment(),
             ),
-            spacing="4",
-            width="100%",
-            align="stretch",
         ),
-        max_width="60rem",
-        padding_y="2rem",
+        class_name="vitrine-dash vitrine-clientes",
+    )
+
+
+FILM_POSTER_TONES = 5
+FILM_STATUS_FILTERS = (
+    ("all", "Todos"),
+    ("active", "Ativos"),
+    ("inactive", "Inativos"),
+)
+CLASSIFICATION_BADGES = {
+    "Livre": ("L", "livre"),
+    "10 anos": ("10", "10"),
+    "12 anos": ("12", "12"),
+    "14 anos": ("14", "14"),
+    "16 anos": ("16", "16"),
+    "18 anos": ("18", "18"),
+}
+
+
+def classification_badge(classification) -> rx.Component:
+    """Selo de classificação indicativa; aceita valor literal ou Var."""
+
+    return rx.el.span(
+        rx.match(
+            classification,
+            *[(name, label) for name, (label, _) in CLASSIFICATION_BADGES.items()],
+            "?",
+        ),
+        role="img",
+        aria_label=classification,
+        class_name=rx.match(
+            classification,
+            *[
+                (name, f"vitrine-acervo__rating vitrine-acervo__rating--{tone}")
+                for name, (_, tone) in CLASSIFICATION_BADGES.items()
+            ],
+            "vitrine-acervo__rating",
+        ),
     )
 
 
 def render_film_card(film: FilmeCatalogo) -> rx.Component:
-    return rx.box(
-        rx.hstack(
-            rx.vstack(
-                rx.heading(film["titulo"], size="5"),
-                rx.text(film["genero"], " · ", film["ano_lancamento"], color="gray"),
-                rx.text(
-                    film["classificacao"],
-                    " · ",
-                    film["valor_locacao_display"],
-                    " · ",
-                    rx.cond(film["status"] == "active", "Ativo", "Inativo"),
-                ),
-                spacing="1",
-                align="start",
-            ),
+    return rx.el.article(
+        rx.box(
+            rx.el.span(film["genero"], class_name="vitrine-acervo__poster-genre"),
+            rx.el.span(film["titulo"], class_name="vitrine-acervo__poster-title"),
+            rx.el.span(film["ano_lancamento"], class_name="vitrine-acervo__poster-year"),
+            # Com capa, a imagem cobre o pôster de cor; sem capa, ele continua visível.
             rx.cond(
-                State.user_role == "admin",
-                rx.link(
-                    "Editar",
-                    href=f"/filmes/{film['id']}/editar",
+                film["capa_url"],
+                rx.el.img(
+                    src=film["capa_url"],
+                    alt="Capa de " + film["titulo"],
+                    loading="lazy",
+                    decoding="async",
+                    class_name="vitrine-acervo__poster-img",
                 ),
             ),
-            width="100%",
-            justify="between",
-            align="center",
+            class_name=(
+                "vitrine-acervo__poster vitrine-acervo__poster--tone-"
+                + (film["id"] % FILM_POSTER_TONES).to_string()
+            ),
+            aria_hidden="true",
         ),
-        padding="1rem",
-        border="1px solid #e5e7eb",
-        border_radius="12px",
-        width="100%",
+        rx.cond(
+            State.user_role == "admin",
+            rx.el.a(
+                rx.icon("pencil", size=16, stroke_width=1.8, aria_hidden="true"),
+                href=f"/filmes/{film['id']}/editar",
+                aria_label="Editar " + film["titulo"],
+                title="Editar",
+                class_name="vitrine-acervo__edit",
+            ),
+        ),
+        rx.box(
+            rx.box(
+                rx.el.h3(film["titulo"], class_name="vitrine-acervo__film-title"),
+                rx.el.p(
+                    film["genero"],
+                    " · ",
+                    film["ano_lancamento"],
+                    class_name="vitrine-acervo__film-meta",
+                ),
+                class_name="vitrine-acervo__film-main",
+            ),
+            rx.box(
+                rx.box(
+                    rx.el.span("Classificação", class_name="vitrine-acervo__stat-label"),
+                    classification_badge(film["classificacao"]),
+                    class_name="vitrine-acervo__stat",
+                ),
+                rx.box(
+                    rx.el.span("Locação", class_name="vitrine-acervo__stat-label"),
+                    rx.el.span(
+                        film["valor_locacao_display"],
+                        class_name="vitrine-acervo__price",
+                    ),
+                    class_name="vitrine-acervo__stat",
+                ),
+                rx.box(
+                    rx.el.span("Status", class_name="vitrine-acervo__stat-label"),
+                    rx.el.span(
+                        rx.el.span(
+                            class_name=rx.cond(
+                                film["status"] == "active",
+                                "vitrine-acervo__dot vitrine-acervo__dot--on",
+                                "vitrine-acervo__dot",
+                            ),
+                            aria_hidden="true",
+                        ),
+                        rx.cond(film["status"] == "active", "Ativo", "Inativo"),
+                        class_name="vitrine-acervo__status",
+                    ),
+                    class_name="vitrine-acervo__stat",
+                ),
+                class_name="vitrine-acervo__film-foot",
+            ),
+            class_name="vitrine-acervo__film-info",
+        ),
+        class_name="vitrine-acervo__card",
+    )
+
+
+def new_film_tile() -> rx.Component:
+    """Atalho administrativo ao formulário real de cadastro."""
+
+    return rx.cond(
+        State.user_role == "admin",
+        rx.el.a(
+            rx.box(
+                rx.icon("plus", size=20, stroke_width=2, aria_hidden="true"),
+                class_name="vitrine-acervo__tile-icon",
+            ),
+            rx.el.span("Cadastrar filme", class_name="vitrine-acervo__tile-title"),
+            rx.el.span(
+                "Título, gênero, ano, classificação e valor",
+                class_name="vitrine-acervo__tile-note",
+            ),
+            href="/filmes/novo",
+            class_name="vitrine-acervo__tile",
+        ),
+    )
+
+
+def film_status_filter_group() -> rx.Component:
+    """Filtro de apresentação sobre a lista já carregada; não consulta o Xano."""
+
+    return rx.box(
+        *[
+            rx.el.button(
+                label,
+                type="button",
+                on_click=State.capture_film_status_filter(value),
+                aria_pressed=State.film_status_filter == value,
+                class_name=rx.cond(
+                    State.film_status_filter == value,
+                    "vitrine-acervo__seg vitrine-acervo__seg--on",
+                    "vitrine-acervo__seg",
+                ),
+            )
+            for value, label in FILM_STATUS_FILTERS
+        ],
+        role="group",
+        aria_label="Filtrar por status",
+        class_name="vitrine-acervo__segmented",
+    )
+
+
+def films_filters() -> rx.Component:
+    return rx.box(
+        rx.box(
+            rx.icon("search", size=18, stroke_width=1.8, aria_hidden="true"),
+            rx.el.input(
+                placeholder="Buscar por título",
+                value=State.title_search,
+                on_change=State.capture_title_search,
+                aria_label="Buscar por título",
+                class_name="vitrine-acervo__input vitrine-acervo__input--icon",
+            ),
+            class_name="vitrine-acervo__search",
+        ),
+        rx.el.input(
+            placeholder="Filtrar por gênero",
+            value=State.genre_filter,
+            on_change=State.capture_genre_filter,
+            aria_label="Filtrar por gênero",
+            class_name="vitrine-acervo__input vitrine-acervo__genre",
+        ),
+        film_status_filter_group(),
+        rx.el.button(
+            "Buscar",
+            type="button",
+            on_click=State.apply_film_filters,
+            class_name="vitrine-acervo__search-button",
+        ),
+        rx.el.span(
+            State.visible_films.length(),
+            rx.cond(State.visible_films.length() == 1, " filme", " filmes"),
+            class_name="vitrine-acervo__count",
+            aria_live="polite",
+        ),
+        class_name="vitrine-acervo__filters",
     )
 
 
 def render_films_page() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.hstack(
-                rx.heading("Catálogo de filmes", size="8"),
-                rx.cond(
-                    State.user_role == "admin",
-                    rx.link("Cadastrar filme", href="/filmes/novo"),
-                ),
-                width="100%",
-                justify="between",
-                align="center",
+    return rx.el.main(
+        dashboard_topbar("/filmes"),
+        rx.el.section(
+            rx.box(
+                rx.el.span("ACERVO", class_name="vitrine-acervo__eyebrow"),
+                rx.el.h1("Catálogo de filmes", class_name="vitrine-dash__title"),
+                class_name="vitrine-dash__heading-text",
             ),
-            rx.link("Voltar ao backoffice", href="/backoffice"),
             rx.cond(
-                State.films_success != "",
-                rx.callout(
-                    State.films_success,
-                    color_scheme="green",
-                    role="status",
+                State.user_role == "admin",
+                rx.el.a(
+                    rx.icon("plus", size=18, stroke_width=2, aria_hidden="true"),
+                    "Cadastrar filme",
+                    href="/filmes/novo",
+                    class_name="vitrine-acervo__primary",
                 ),
             ),
-            rx.hstack(
-                rx.input(
-                    placeholder="Buscar por título",
-                    value=State.title_search,
-                    on_change=State.capture_title_search,
-                    aria_label="Buscar por título",
-                ),
-                rx.input(
-                    placeholder="Filtrar por gênero",
-                    value=State.genre_filter,
-                    on_change=State.capture_genre_filter,
-                    aria_label="Filtrar por gênero",
-                ),
-                rx.button("Buscar", on_click=State.apply_film_filters),
-                width="100%",
+            class_name="vitrine-dash__heading",
+        ),
+        rx.cond(
+            State.films_success != "",
+            rx.box(
+                State.films_success,
+                role="status",
+                class_name="vitrine-dash__notice vitrine-dash__notice--success",
+            ),
+        ),
+        films_filters(),
+        rx.cond(
+            State.films_error != "",
+            rx.box(
+                State.films_error,
+                role="alert",
+                class_name="vitrine-dash__notice vitrine-dash__notice--error",
+            ),
+        ),
+        rx.cond(
+            State.films_loading,
+            rx.box(
+                rx.spinner(),
+                rx.text("Carregando filmes…"),
+                role="status",
+                aria_live="polite",
+                class_name="vitrine-dash__notice vitrine-dash__notice--loading",
             ),
             rx.cond(
                 State.films_error != "",
-                rx.callout(State.films_error, color_scheme="red", role="alert"),
-            ),
-            rx.cond(
-                State.films_loading,
-                rx.spinner(),
-                rx.cond(
-                    State.films_error != "",
-                    rx.fragment(),
+                rx.fragment(),
+                rx.fragment(
                     rx.cond(
                         State.has_films,
-                        rx.vstack(
-                            rx.foreach(State.films, render_film_card),
-                            width="100%",
-                            align="stretch",
+                        rx.cond(
+                            State.visible_films.length() > 0,
+                            rx.fragment(),
+                            rx.el.p(
+                                "Nenhum filme com este status.",
+                                class_name="vitrine-acervo__empty",
+                            ),
                         ),
-                        rx.text("Nenhum filme encontrado.", color="gray"),
+                        rx.el.p(
+                            "Nenhum filme encontrado.",
+                            class_name="vitrine-acervo__empty",
+                        ),
+                    ),
+                    rx.box(
+                        rx.foreach(State.visible_films, render_film_card),
+                        new_film_tile(),
+                        class_name="vitrine-acervo__grid",
+                    ),
+                    rx.el.p(
+                        "Mostrando ",
+                        State.visible_films.length(),
+                        " de ",
+                        State.films.length(),
+                        rx.cond(State.films.length() == 1, " filme", " filmes"),
+                        class_name="vitrine-acervo__footer",
                     ),
                 ),
             ),
-            spacing="4",
-            width="100%",
-            align="stretch",
         ),
-        max_width="60rem",
-        padding_y="2rem",
+        class_name="vitrine-dash vitrine-acervo",
     )
 
 
 def render_exemplar_card(exemplar: Exemplar) -> rx.Component:
-    return rx.box(
-        rx.vstack(
-            rx.heading("Exemplar ", exemplar["identificador"], size="5"),
-            rx.text("Filme: ", exemplar["filme_titulo"]),
-            rx.text("ID do filme: ", exemplar["filme_id"], color="gray"),
-            spacing="1",
-            align="start",
+    """Identificador do exemplar exibido como dado, sem ações de edição."""
+
+    return rx.el.li(
+        rx.el.span("EXEMPLAR", class_name="vitrine-exemplares__chip-label"),
+        rx.el.span(exemplar["identificador"], class_name="vitrine-exemplares__chip-code"),
+        class_name="vitrine-exemplares__chip",
+    )
+
+
+def exemplar_copy_shortcut(group: ExemplarGrupo) -> rx.Component:
+    """Abre o cadastro com o filme pré-selecionado; não gera identificador."""
+
+    return rx.cond(
+        (State.user_role == "admin") & group["pode_adicionar"],
+        rx.el.button(
+            rx.icon("plus", size=16, stroke_width=2, aria_hidden="true"),
+            rx.cond(group["count"] > 0, "Outra cópia", "Adicionar cópia"),
+            type="button",
+            on_click=[
+                State.capture_exemplar_film_selection(group["opcao"]),
+                State.set_exemplar_dialog_open(True),
+            ],
+            aria_label="Adicionar cópia de " + group["titulo"],
+            class_name="vitrine-exemplares__add",
         ),
-        padding="1rem",
-        border="1px solid #e5e7eb",
-        border_radius="12px",
-        width="100%",
+    )
+
+
+def render_exemplar_group(group: ExemplarGrupo) -> rx.Component:
+    return rx.el.article(
+        rx.box(
+            rx.box(
+                rx.el.span(group["titulo"], class_name="vitrine-exemplares__thumb-text"),
+                # Com capa no catálogo, a imagem cobre o gradiente.
+                rx.cond(
+                    group["capa_url"],
+                    rx.el.img(
+                        src=group["capa_url"],
+                        alt="",
+                        loading="lazy",
+                        decoding="async",
+                        class_name="vitrine-exemplares__thumb-img",
+                    ),
+                ),
+                class_name="vitrine-exemplares__thumb",
+                aria_hidden="true",
+            ),
+            rx.box(
+                rx.el.h3(group["titulo"], class_name="vitrine-exemplares__film-title"),
+                rx.cond(
+                    group["detalhe"] != "",
+                    rx.el.p(group["detalhe"], class_name="vitrine-exemplares__film-meta"),
+                ),
+                rx.el.p(
+                    "ID do filme: ",
+                    group["filme_id"],
+                    class_name="vitrine-exemplares__film-id",
+                ),
+                class_name="vitrine-exemplares__film-text",
+            ),
+            class_name="vitrine-exemplares__film",
+        ),
+        rx.box(
+            rx.el.span(group["count"], class_name="vitrine-exemplares__count-number"),
+            rx.el.span(group["unidade"], class_name="vitrine-exemplares__count-unit"),
+            class_name=rx.cond(
+                group["count"] > 0,
+                "vitrine-exemplares__count",
+                "vitrine-exemplares__count vitrine-exemplares__count--empty",
+            ),
+        ),
+        rx.el.ul(
+            rx.foreach(group["exemplares"], render_exemplar_card),
+            exemplar_copy_shortcut(group),
+            aria_label="Exemplares de " + group["titulo"],
+            class_name="vitrine-exemplares__chips",
+        ),
+        class_name="vitrine-exemplares__row vitrine-exemplares__row--tone-"
+        + group["tom"].to_string(),
+    )
+
+
+def exemplares_filters() -> rx.Component:
+    return rx.box(
+        rx.box(
+            rx.icon("search", size=18, stroke_width=1.8, aria_hidden="true"),
+            rx.el.input(
+                placeholder="Buscar por identificador",
+                value=State.exemplar_search,
+                on_change=State.capture_exemplar_search,
+                aria_label="Buscar por identificador",
+                class_name="vitrine-exemplares__input vitrine-exemplares__input--icon",
+            ),
+            class_name="vitrine-exemplares__search",
+        ),
+        rx.el.select(
+            rx.foreach(
+                State.exemplar_filter_options,
+                lambda option: rx.el.option(option, value=option),
+            ),
+            value=State.exemplar_film_filter,
+            on_change=State.capture_exemplar_film_filter,
+            aria_label="Filtrar por filme",
+            class_name="vitrine-exemplares__input vitrine-exemplares__select",
+        ),
+        rx.el.span(
+            State.exemplar_summary,
+            class_name="vitrine-exemplares__summary",
+            aria_live="polite",
+        ),
+        class_name="vitrine-exemplares__filters",
+    )
+
+
+def exemplar_dialog() -> rx.Component:
+    """Cadastro de exemplar em diálogo controlado; mesmos handlers do formulário anterior."""
+
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.box(
+                rx.box(
+                    rx.dialog.title(
+                        "Cadastrar exemplar",
+                        class_name="vitrine-exemplares__dialog-title",
+                    ),
+                    rx.dialog.description(
+                        "Cada cópia física do filme é um exemplar.",
+                        class_name="vitrine-exemplares__dialog-sub",
+                    ),
+                ),
+                rx.dialog.close(
+                    rx.el.button(
+                        rx.icon("x", size=18, stroke_width=1.8, aria_hidden="true"),
+                        type="button",
+                        aria_label="Fechar",
+                        class_name="vitrine-exemplares__close",
+                    )
+                ),
+                class_name="vitrine-exemplares__dialog-head",
+            ),
+            rx.cond(
+                State.exemplar_films_error != "",
+                rx.box(
+                    State.exemplar_films_error,
+                    role="alert",
+                    class_name="vitrine-exemplares__alert",
+                ),
+            ),
+            rx.cond(
+                State.exemplar_form_error != "",
+                rx.box(
+                    State.exemplar_form_error,
+                    role="alert",
+                    class_name="vitrine-exemplares__alert",
+                ),
+            ),
+            rx.box(
+                rx.el.label(
+                    "Identificador do exemplar",
+                    html_for="exemplar-identifier",
+                    class_name="vitrine-exemplares__label",
+                ),
+                rx.el.input(
+                    id="exemplar-identifier",
+                    placeholder="Identificador do exemplar",
+                    value=State.exemplar_identifier,
+                    on_change=State.capture_exemplar_identifier,
+                    required=True,
+                    aria_label="Identificador do exemplar",
+                    class_name="vitrine-exemplares__input vitrine-exemplares__mono",
+                ),
+                rx.el.span(
+                    "Código único do exemplar.",
+                    class_name="vitrine-exemplares__hint",
+                ),
+                class_name="vitrine-exemplares__field",
+            ),
+            rx.box(
+                rx.el.label(
+                    "Filme",
+                    html_for="exemplar-film",
+                    class_name="vitrine-exemplares__label",
+                ),
+                rx.el.select(
+                    rx.el.option("Selecione o filme", value="", disabled=True),
+                    rx.foreach(
+                        State.exemplar_film_options,
+                        lambda option: rx.el.option(option, value=option),
+                    ),
+                    id="exemplar-film",
+                    value=State.exemplar_film_selection,
+                    on_change=State.capture_exemplar_film_selection,
+                    required=True,
+                    aria_label="Filme associado ao exemplar",
+                    class_name="vitrine-exemplares__input vitrine-exemplares__select",
+                ),
+                class_name="vitrine-exemplares__field",
+            ),
+            rx.box(
+                rx.dialog.close(
+                    rx.el.button(
+                        "Cancelar",
+                        type="button",
+                        class_name="vitrine-exemplares__cancel",
+                    )
+                ),
+                rx.button(
+                    "Cadastrar exemplar",
+                    on_click=State.submit_exemplar,
+                    loading=State.exemplar_form_loading,
+                    class_name="vitrine-exemplares__primary",
+                ),
+                class_name="vitrine-exemplares__dialog-actions",
+            ),
+            class_name="vitrine-exemplares-dialog",
+        ),
+        open=State.exemplar_dialog_open,
+        on_open_change=State.set_exemplar_dialog_open,
     )
 
 
 def render_exemplares_page() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.hstack(
-                rx.heading("Exemplares", size="8"),
-                width="100%",
-                justify="between",
-                align="center",
-            ),
-            rx.link("Voltar ao backoffice", href="/backoffice"),
-            rx.cond(
-                State.exemplares_success != "",
-                rx.callout(
-                    State.exemplares_success,
-                    color_scheme="green",
-                    role="status",
-                ),
-            ),
-            rx.cond(
-                State.exemplares_error != "",
-                rx.callout(
-                    State.exemplares_error,
-                    color_scheme="red",
-                    role="alert",
-                ),
+    return rx.el.main(
+        dashboard_topbar("/exemplares"),
+        rx.el.section(
+            rx.box(
+                rx.el.span("ACERVO", class_name="vitrine-exemplares__eyebrow"),
+                rx.el.h1("Exemplares", class_name="vitrine-dash__title"),
+                class_name="vitrine-dash__heading-text",
             ),
             rx.cond(
                 State.user_role == "admin",
-                rx.box(
-                    rx.vstack(
-                        rx.heading("Cadastrar exemplar", size="5"),
-                        rx.cond(
-                            State.exemplar_films_error != "",
-                            rx.callout(
-                                State.exemplar_films_error,
-                                color_scheme="red",
-                                role="alert",
-                            ),
-                        ),
-                        rx.cond(
-                            State.exemplar_form_error != "",
-                            rx.callout(
-                                State.exemplar_form_error,
-                                color_scheme="red",
-                                role="alert",
-                            ),
-                        ),
-                        rx.input(
-                            placeholder="Identificador do exemplar",
-                            value=State.exemplar_identifier,
-                            on_change=State.capture_exemplar_identifier,
-                            required=True,
-                            aria_label="Identificador do exemplar",
-                        ),
-                        rx.select(
-                            State.exemplar_film_options,
-                            value=State.exemplar_film_selection,
-                            on_change=State.capture_exemplar_film_selection,
-                            required=True,
-                            aria_label="Filme associado ao exemplar",
-                        ),
-                        rx.button(
-                            "Cadastrar exemplar",
-                            on_click=State.submit_exemplar,
-                            loading=State.exemplar_form_loading,
-                            width="100%",
-                        ),
-                        spacing="3",
-                        align="stretch",
-                        width="100%",
-                    ),
-                    padding="1.5rem",
-                    border="1px solid #e5e7eb",
-                    border_radius="12px",
-                    width="100%",
+                rx.el.button(
+                    rx.icon("plus", size=18, stroke_width=2, aria_hidden="true"),
+                    "Cadastrar exemplar",
+                    type="button",
+                    on_click=State.set_exemplar_dialog_open(True),
+                    class_name="vitrine-exemplares__primary",
                 ),
+            ),
+            class_name="vitrine-dash__heading",
+        ),
+        rx.cond(
+            State.exemplares_success != "",
+            rx.box(
+                State.exemplares_success,
+                role="status",
+                class_name="vitrine-dash__notice vitrine-dash__notice--success",
+            ),
+        ),
+        rx.cond(
+            State.exemplares_error != "",
+            rx.box(
+                State.exemplares_error,
+                role="alert",
+                class_name="vitrine-dash__notice vitrine-dash__notice--error",
+            ),
+        ),
+        rx.cond(
+            (State.user_role == "admin") & (State.exemplar_films_error != ""),
+            rx.box(
+                State.exemplar_films_error,
+                role="alert",
+                class_name="vitrine-dash__notice vitrine-dash__notice--error",
+            ),
+        ),
+        exemplares_filters(),
+        rx.cond(
+            State.exemplares_loading,
+            rx.box(
+                rx.spinner(),
+                rx.text("Carregando exemplares…"),
+                role="status",
+                aria_live="polite",
+                class_name="vitrine-dash__notice vitrine-dash__notice--loading",
             ),
             rx.cond(
-                State.exemplares_loading,
-                rx.spinner(),
-                rx.cond(
-                    State.exemplares_error != "",
-                    rx.fragment(),
+                State.exemplares_error != "",
+                rx.fragment(),
+                rx.fragment(
                     rx.cond(
                         State.has_exemplares,
-                        rx.vstack(
-                            rx.foreach(State.exemplares, render_exemplar_card),
-                            width="100%",
-                            align="stretch",
+                        rx.cond(
+                            State.exemplar_groups.length() > 0,
+                            rx.fragment(),
+                            rx.el.p(
+                                "Nenhum exemplar corresponde aos filtros.",
+                                class_name="vitrine-exemplares__empty",
+                            ),
                         ),
-                        rx.text("Nenhum exemplar encontrado.", color="gray"),
+                        rx.el.p(
+                            "Nenhum exemplar encontrado.",
+                            class_name="vitrine-exemplares__empty",
+                        ),
+                    ),
+                    rx.cond(
+                        State.exemplar_groups.length() > 0,
+                        rx.box(
+                            rx.foreach(State.exemplar_groups, render_exemplar_group),
+                            class_name="vitrine-exemplares__list",
+                        ),
                     ),
                 ),
             ),
-            spacing="4",
-            width="100%",
-            align="stretch",
         ),
-        max_width="60rem",
-        padding_y="2rem",
+        rx.cond(State.user_role == "admin", exemplar_dialog()),
+        class_name="vitrine-dash vitrine-exemplares",
+    )
+
+
+def film_form_field(label: str, field_id: str, control: rx.Component, class_name: str = "") -> rx.Component:
+    return rx.box(
+        rx.el.label(label, html_for=field_id, class_name="vitrine-acervo__label"),
+        control,
+        class_name=f"vitrine-acervo__field {class_name}".strip(),
+    )
+
+
+def classification_picker() -> rx.Component:
+    """Seleção segmentada ligada ao mesmo handler do campo de classificação."""
+
+    return rx.box(
+        rx.el.span("Classificação indicativa", class_name="vitrine-acervo__label"),
+        rx.box(
+            *[
+                rx.el.button(
+                    classification_badge(name),
+                    rx.el.span("Livre" if name == "Livre" else name.removesuffix(" anos")),
+                    type="button",
+                    on_click=State.capture_film_classification(name),
+                    aria_pressed=State.form_classification == name,
+                    aria_label=name,
+                    class_name=rx.cond(
+                        State.form_classification == name,
+                        "vitrine-acervo__choice vitrine-acervo__choice--on",
+                        "vitrine-acervo__choice",
+                    ),
+                )
+                for name in CLASSIFICACOES
+            ],
+            role="group",
+            aria_label="Classificação indicativa",
+            class_name="vitrine-acervo__choices",
+        ),
+        class_name="vitrine-acervo__field",
+    )
+
+
+def film_status_picker() -> rx.Component:
+    """Status do filme no catálogo; exibido somente na edição."""
+
+    return rx.cond(
+        State.editing_film,
+        rx.box(
+            rx.el.span("Status", class_name="vitrine-acervo__label"),
+            rx.box(
+                *[
+                    rx.el.button(
+                        label,
+                        type="button",
+                        on_click=State.capture_film_status(value),
+                        aria_pressed=State.form_status == value,
+                        class_name=rx.cond(
+                            State.form_status == value,
+                            "vitrine-acervo__seg vitrine-acervo__seg--on",
+                            "vitrine-acervo__seg",
+                        ),
+                    )
+                    for value, label in (("active", "Ativo"), ("inactive", "Inativo"))
+                ],
+                role="group",
+                aria_label="Status do filme",
+                class_name="vitrine-acervo__segmented",
+            ),
+            class_name="vitrine-acervo__field",
+        ),
+    )
+
+
+FILM_COVER_UPLOAD_ID = "film-cover"
+
+
+def film_cover_field() -> rx.Component:
+    """Capa na edição: enviada e removida direto no Xano, sem depender de "Salvar"."""
+
+    has_cover = State.form_cover_url != ""
+    return rx.cond(
+        State.editing_film,
+        rx.box(
+            rx.el.span("Capa", class_name="vitrine-acervo__label"),
+            rx.box(
+                rx.cond(
+                    has_cover,
+                    rx.el.img(
+                        src=State.form_cover_url,
+                        alt="Capa de " + State.form_title,
+                        class_name="vitrine-acervo__cover-preview",
+                    ),
+                    rx.box(
+                        rx.icon("image", size=22, stroke_width=1.6, aria_hidden="true"),
+                        rx.el.span("Sem capa"),
+                        class_name="vitrine-acervo__cover-preview vitrine-acervo__cover-preview--empty",
+                    ),
+                ),
+                rx.box(
+                    rx.upload(
+                        rx.box(
+                            rx.icon("upload", size=18, stroke_width=1.8, aria_hidden="true"),
+                            rx.el.span(
+                                rx.cond(has_cover, "Trocar capa", "Enviar capa"),
+                                class_name="vitrine-acervo__cover-cta",
+                            ),
+                            rx.el.span(
+                                "Arraste ou clique · JPEG, PNG ou WebP até 2 MB",
+                                class_name="vitrine-acervo__cover-hint",
+                            ),
+                            class_name="vitrine-acervo__cover-drop-inner",
+                        ),
+                        id=FILM_COVER_UPLOAD_ID,
+                        accept=CAPA_ACCEPT,
+                        max_files=1,
+                        multiple=False,
+                        max_size=CAPA_MAX_BYTES,
+                        disabled=State.cover_loading,
+                        on_drop=State.upload_film_cover(rx.upload_files(upload_id=FILM_COVER_UPLOAD_ID)),
+                        on_drop_rejected=State.reject_film_cover,
+                        class_name="vitrine-acervo__cover-drop",
+                    ),
+                    # Sem storage de arquivos no plano do Xano, a capa pode vir de um link https.
+                    rx.box(
+                        rx.el.input(
+                            id="film-cover-link",
+                            type="url",
+                            placeholder="ou cole o link https da imagem",
+                            value=State.form_cover_link,
+                            on_change=State.capture_cover_link,
+                            max_length=500,
+                            aria_label="Link https da imagem da capa",
+                            class_name="vitrine-acervo__input vitrine-acervo__cover-link",
+                        ),
+                        rx.el.button(
+                            "Usar link",
+                            type="button",
+                            on_click=State.save_film_cover_link,
+                            disabled=State.cover_loading,
+                            class_name="vitrine-acervo__cover-remove",
+                        ),
+                        class_name="vitrine-acervo__cover-link-row",
+                    ),
+                    rx.cond(
+                        has_cover,
+                        rx.el.button(
+                            rx.icon("trash-2", size=15, stroke_width=1.8, aria_hidden="true"),
+                            "Remover capa",
+                            type="button",
+                            on_click=State.remove_film_cover,
+                            disabled=State.cover_loading,
+                            class_name="vitrine-acervo__cover-remove",
+                        ),
+                    ),
+                    rx.cond(
+                        State.cover_loading,
+                        rx.box(
+                            rx.spinner(size="1"),
+                            rx.text("Gravando a capa no Xano…"),
+                            role="status",
+                            aria_live="polite",
+                            class_name="vitrine-acervo__cover-status",
+                        ),
+                    ),
+                    rx.cond(
+                        State.cover_error != "",
+                        rx.box(State.cover_error, role="alert",
+                               class_name="vitrine-acervo__cover-status vitrine-acervo__cover-status--error"),
+                    ),
+                    rx.cond(
+                        State.cover_success != "",
+                        rx.box(State.cover_success, role="status",
+                               class_name="vitrine-acervo__cover-status vitrine-acervo__cover-status--ok"),
+                    ),
+                    class_name="vitrine-acervo__cover-actions",
+                ),
+                class_name="vitrine-acervo__cover",
+            ),
+            id="film-cover-field",
+            class_name="vitrine-acervo__field",
+        ),
     )
 
 
 def render_film_form() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.heading(
-                rx.cond(State.editing_film, "Editar filme", "Cadastrar filme"),
-                size="8",
+    return rx.el.main(
+        dashboard_topbar("/filmes"),
+        rx.el.section(
+            rx.box(
+                rx.box(
+                    rx.el.h1(
+                        rx.cond(State.editing_film, "Editar filme", "Cadastrar filme"),
+                        class_name="vitrine-acervo__form-title",
+                    ),
+                    rx.el.p(
+                        rx.cond(
+                            State.editing_film,
+                            "Altere os dados do filme no catálogo.",
+                            "O filme entra no catálogo assim que for salvo.",
+                        ),
+                        class_name="vitrine-acervo__form-sub",
+                    ),
+                ),
+                rx.el.a(
+                    rx.icon("x", size=18, stroke_width=1.8, aria_hidden="true"),
+                    href="/filmes",
+                    aria_label="Voltar ao catálogo",
+                    title="Voltar ao catálogo",
+                    class_name="vitrine-acervo__close",
+                ),
+                class_name="vitrine-acervo__form-head",
             ),
-            rx.link("Voltar ao catálogo", href="/filmes"),
             rx.cond(
                 State.form_error != "",
-                rx.callout(State.form_error, color_scheme="red", role="alert"),
-            ),
-            rx.input(
-                placeholder="Título",
-                value=State.form_title,
-                on_change=State.capture_film_title,
-                max_length=200,
-                required=True,
-                aria_label="Título",
-            ),
-            rx.input(
-                placeholder="Gênero",
-                value=State.form_genre,
-                on_change=State.capture_film_genre,
-                max_length=100,
-                required=True,
-                aria_label="Gênero",
-            ),
-            rx.input(
-                placeholder="Ano de lançamento",
-                type="number",
-                min=1888,
-                value=State.form_year,
-                on_change=State.capture_film_year,
-                required=True,
-                aria_label="Ano de lançamento",
-            ),
-            rx.select(
-                list(CLASSIFICACOES),
-                value=State.form_classification,
-                on_change=State.capture_film_classification,
-                required=True,
-                aria_label="Classificação indicativa",
-            ),
-            rx.input(
-                placeholder="Valor da locação (R$)",
-                value=State.form_rent_price,
-                on_change=State.capture_film_rent_price,
-                required=True,
-                aria_label="Valor da locação em reais",
-            ),
-            rx.cond(
-                State.editing_film,
-                rx.select(
-                    ["active", "inactive"],
-                    value=State.form_status,
-                    on_change=State.capture_film_status,
-                    required=True,
-                    aria_label="Status do filme",
+                rx.box(
+                    State.form_error,
+                    role="alert",
+                    class_name="vitrine-dash__notice vitrine-dash__notice--error",
                 ),
             ),
-            rx.button(
-                "Salvar alterações",
-                on_click=State.submit_film,
-                loading=State.form_loading,
-                disabled=State.editing_film & (State.editing_film_id == 0),
-                width="100%",
+            film_cover_field(),
+            film_form_field(
+                "Título",
+                "film-title",
+                rx.el.input(
+                    id="film-title",
+                    placeholder="Título",
+                    value=State.form_title,
+                    on_change=State.capture_film_title,
+                    max_length=200,
+                    required=True,
+                    aria_label="Título",
+                    class_name="vitrine-acervo__input",
+                ),
             ),
-            spacing="4",
-            align="stretch",
-            width="100%",
+            rx.box(
+                film_form_field(
+                    "Gênero",
+                    "film-genre",
+                    rx.el.input(
+                        id="film-genre",
+                        placeholder="Gênero",
+                        value=State.form_genre,
+                        on_change=State.capture_film_genre,
+                        max_length=100,
+                        required=True,
+                        aria_label="Gênero",
+                        class_name="vitrine-acervo__input",
+                    ),
+                ),
+                film_form_field(
+                    "Ano de lançamento",
+                    "film-year",
+                    rx.el.input(
+                        id="film-year",
+                        placeholder="Ano de lançamento",
+                        type="text",
+                        input_mode="numeric",
+                        pattern="[0-9]*",
+                        max_length=4,
+                        value=State.form_year,
+                        on_change=State.capture_film_year,
+                        required=True,
+                        aria_label="Ano de lançamento",
+                        class_name="vitrine-acervo__input",
+                    ),
+                ),
+                class_name="vitrine-acervo__row",
+            ),
+            classification_picker(),
+            rx.box(
+                film_form_field(
+                    "Valor da locação",
+                    "film-rent",
+                    rx.el.input(
+                        id="film-rent",
+                        placeholder="Valor da locação (R$)",
+                        value=State.form_rent_price,
+                        on_change=State.capture_film_rent_price,
+                        required=True,
+                        aria_label="Valor da locação em reais",
+                        class_name="vitrine-acervo__input",
+                    ),
+                ),
+                film_status_picker(),
+                class_name="vitrine-acervo__row",
+            ),
+            rx.box(
+                rx.el.a(
+                    "Cancelar",
+                    href="/filmes",
+                    class_name="vitrine-acervo__cancel",
+                ),
+                rx.button(
+                    "Salvar alterações",
+                    on_click=State.submit_film,
+                    loading=State.form_loading,
+                    disabled=State.editing_film & (State.editing_film_id == 0),
+                    class_name="vitrine-acervo__primary vitrine-acervo__submit",
+                ),
+                class_name="vitrine-acervo__form-actions",
+            ),
+            class_name="vitrine-acervo__form-card",
         ),
-        max_width="36rem",
-        padding_y="2rem",
+        class_name="vitrine-dash vitrine-acervo vitrine-acervo--form",
     )
 
 
@@ -1918,12 +3308,12 @@ def exemplares_page() -> rx.Component:
 
 @rx.page(route="/locacoes/nova", on_load=State.load_new_rental)
 def rental_registration_page() -> rx.Component:
-    return rx.cond(State.is_authenticated, render_rental_registration(State.user_role == "admin"), rx.fragment())
+    return rx.cond(State.is_authenticated, render_rental_registration(State.user_role == "admin", dashboard_topbar("/locacoes/nova")), rx.fragment())
 
 
 @rx.page(route="/locacoes/[rental_id]", on_load=State.load_rental_detail)
 def rental_detail_page() -> rx.Component:
-    return rx.cond(State.is_authenticated, render_rental_detail(), rx.fragment())
+    return rx.cond(State.is_authenticated, render_rental_detail(dashboard_topbar("/locacoes/nova")), rx.fragment())
 
 
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)
@@ -2048,7 +3438,12 @@ def reset_password_page() -> rx.Component:
 
 app = rx.App(
     stylesheets=[
-        "https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap",
         "/login.css",
+        "/dashboard.css",
+        "/acervo.css",
+        "/exemplares.css",
+        "/clientes.css",
+        "/locacoes.css",
     ]
 )

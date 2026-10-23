@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -143,3 +143,17 @@ class TestExemplarClient(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExemplarRateLimit(unittest.IsolatedAsyncioTestCase):
+    async def test_429_reports_plan_limit_and_default_retry_after(self):
+        from ProjetoLocadora.xano_client import XanoExemplarError as _Err, list_exemplares_xano as _list
+
+        with patch(
+            "ProjetoLocadora.xano_client._exemplar_request",
+            new=AsyncMock(return_value=httpx.Response(429, json={})),
+        ):
+            with self.assertRaises(_Err) as error:
+                await _list("token")
+        self.assertEqual(error.exception.retry_after, 20)
+        self.assertIn("limite de requisições", error.exception.user_message)

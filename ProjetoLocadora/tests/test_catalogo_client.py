@@ -25,6 +25,8 @@ FILM = {
     "valor_locacao_centavos": 1234,
     "status": "active",
 }
+# Sem capa no Xano, o cliente expõe a URL vazia.
+FILM_RESULT = {**FILM, "capa_url": "", "capa_link": ""}
 
 
 class TestCatalogClient(unittest.IsolatedAsyncioTestCase):
@@ -61,7 +63,7 @@ class TestCatalogClient(unittest.IsolatedAsyncioTestCase):
             list_films_xano("secret-token", titulo=" Nome ", genero="Drama"),
             httpx.Response(200, json=[FILM]),
         )
-        self.assertEqual(result, [FILM])
+        self.assertEqual(result, [FILM_RESULT])
         self.assertEqual(
             requests[0].url.path,
             "/api:catalog-id/catalogo-filmes/filmes",
@@ -80,7 +82,7 @@ class TestCatalogClient(unittest.IsolatedAsyncioTestCase):
             get_film_xano("token", 42),
             httpx.Response(200, json=FILM),
         )
-        self.assertEqual(result, FILM)
+        self.assertEqual(result, FILM_RESULT)
         self.assertEqual(
             requests[0].url.path,
             "/api:catalog-id/catalogo-filmes/filmes/42",
@@ -91,7 +93,7 @@ class TestCatalogClient(unittest.IsolatedAsyncioTestCase):
             create_film_xano("token", {"titulo": "Filme"}),
             httpx.Response(200, json={"film": FILM, "audit_succeeded": True}),
         )
-        self.assertEqual(result, FILM)
+        self.assertEqual(result, FILM_RESULT)
         self.assertEqual(requests[0].method, "POST")
         self.assertEqual(requests[0].read(), b'{"titulo":"Filme"}')
 
@@ -100,7 +102,7 @@ class TestCatalogClient(unittest.IsolatedAsyncioTestCase):
             update_film_xano("token", 42, {"status": "inactive"}),
             httpx.Response(200, json={"film": FILM, "audit_succeeded": True}),
         )
-        self.assertEqual(result, FILM)
+        self.assertEqual(result, FILM_RESULT)
         self.assertEqual(requests[0].method, "PATCH")
         self.assertEqual(
             requests[0].url.path,

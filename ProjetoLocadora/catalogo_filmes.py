@@ -8,6 +8,8 @@ from typing import TypedDict
 
 CLASSIFICACOES = ("Livre", "10 anos", "12 anos", "14 anos", "16 anos", "18 anos")
 STATUS_FILME = ("active", "inactive")
+CAPA_MAX_BYTES = 2 * 1024 * 1024
+CAPA_ACCEPT = {"image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"], "image/webp": [".webp"]}
 
 
 class Filme(TypedDict):
@@ -18,6 +20,10 @@ class Filme(TypedDict):
     classificacao: str
     valor_locacao_centavos: int
     status: str
+    # URL exibida: arquivo do storage do Xano ou, sem ele, o link externo; vazia sem capa.
+    capa_url: str
+    # Link externo informado pelo admin (vazio quando não há).
+    capa_link: str
 
 
 class FilmeCatalogo(TypedDict):
@@ -29,6 +35,42 @@ class FilmeCatalogo(TypedDict):
     valor_locacao_centavos: int
     valor_locacao_display: str
     status: str
+    capa_url: str
+    capa_link: str
+
+
+# Mesmo critério do endpoint capa-link no Xano: https, sem espaços, aspas ou <>.
+_CAPA_LINK = re.compile(r"https://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+")
+
+
+def capa_link_valido(link: str) -> bool:
+    return len(link) <= 500 and bool(_CAPA_LINK.fullmatch(link))
+
+
+def validar_link_capa(link: str) -> str:
+    """Link https da imagem da capa; vazio remove o link."""
+    clean = link.strip()
+    if clean and not capa_link_valido(clean):
+        raise ValueError("Informe um link https válido para a imagem da capa (até 500 caracteres).")
+    return clean
+
+
+def validar_capa(content: bytes) -> tuple[str, str]:
+    """Tipo real da imagem pela assinatura binária, sem confiar no nome do arquivo.
+
+    Retorna (mime, extensão). O Xano confere de novo tipo e tamanho do arquivo gravado.
+    """
+    if not content:
+        raise ValueError("Selecione uma imagem para a capa.")
+    if len(content) > CAPA_MAX_BYTES:
+        raise ValueError("A capa deve ter no máximo 2 MB.")
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", "jpg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", "png"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp", "webp"
+    raise ValueError("A capa deve ser uma imagem JPEG, PNG ou WebP.")
 
 
 def reais_para_centavos(value: str) -> int:

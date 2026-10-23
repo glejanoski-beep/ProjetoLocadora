@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import reflex as rx
 import httpx
 from ProjetoLocadora.ProjetoLocadora import State
-from ProjetoLocadora.xano_client import get_me_xano, is_authorized_employee
+from ProjetoLocadora.xano_client import XanoSessionUnavailable, get_me_xano, is_authorized_employee
 
 
 class TestReflexAuthState(unittest.TestCase):
@@ -178,6 +178,21 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state._login_password, "")
         self.assertFalse(state.is_loading)
 
+    async def test_valid_login_form_flags_submitting_before_calling_xano(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.login_xano",
+            new=AsyncMock(),
+        ) as login:
+            event = await state.submit_login(
+                {"login": "member@example.test", "password": "private-password"}
+            )
+
+        login.assert_not_awaited()
+        self.assertTrue(state.login_submitting)
+        self.assertIsNotNone(event)
+
     async def test_login_ignores_duplicate_submission_while_loading(self):
         state = await rx.State(_reflex_internal_init=True).get_state(State)
         state.is_loading = True
@@ -270,6 +285,89 @@ class TestReflexAuthFlows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state._user_name, "")
         self.assertEqual(state._user_email, "")
         self.assertEqual(state._user_role, "")
+
+    async def test_transient_session_check_failure_keeps_the_session(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+        state._xano_auth_token = "valid-token"
+        state._user_id = "42"
+        state._user_role = "member"
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.get_me_xano",
+            new=AsyncMock(side_effect=XanoSessionUnavailable("rede")),
+        ):
+            result = await state.require_session()
+            await state.restore_session()
+
+        self.assertIsNotNone(result)  # interrompe o carregamento, sem redirecionar ao login
+        self.assertNotIn("/login", str(result))
+        self.assertEqual(state._xano_auth_token, "valid-token")
+        self.assertEqual(state._user_id, "42")
+        self.assertTrue(state.is_authenticated)
+
+    async def test_get_me_retries_network_failure_once_then_succeeds(self):
+        calls = []
+
+        def handle(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise httpx.ConnectError("oscilação", request=request)
+            return httpx.Response(200, json={"id": 42, "role": "member", "is_active": True})
+
+        real = httpx.AsyncClient
+        with patch("ProjetoLocadora.xano_client.httpx.AsyncClient", side_effect=lambda **kw: real(transport=httpx.MockTransport(handle), **kw)), \
+                patch("ProjetoLocadora.xano_client._ME_RETRY_DELAY", 0):
+            me = await get_me_xano("t", base_url="https://xano.test/api")
+        self.assertEqual(me["id"], 42)
+        self.assertEqual(len(calls), 2)
+
+    async def test_get_me_does_not_retry_429_and_reports_retry_after(self):
+        calls = []
+
+        def handle(request):
+            calls.append(request)
+            return httpx.Response(429, headers={"Retry-After": "20"}, json={"code": "ERROR_CODE_TOO_MANY_REQUESTS"})
+
+        real = httpx.AsyncClient
+        with patch("ProjetoLocadora.xano_client.httpx.AsyncClient", side_effect=lambda **kw: real(transport=httpx.MockTransport(handle), **kw)):
+            with self.assertRaises(XanoSessionUnavailable) as ctx:
+                await get_me_xano("t", base_url="https://xano.test/api")
+        self.assertEqual(len(calls), 1)  # repetir consumiria a cota do plano
+        self.assertEqual(ctx.exception.retry_after, 20)
+
+    async def test_rate_limited_session_check_keeps_session_and_says_why(self):
+        state = await rx.State(_reflex_internal_init=True).get_state(State)
+        state._xano_auth_token = "valid-token"
+        state._user_id = "42"
+        state._user_role = "member"
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.get_me_xano",
+            new=AsyncMock(side_effect=XanoSessionUnavailable("limite", retry_after=20)),
+        ):
+            result = await state.require_session()
+        self.assertIn("limite de requisições", str(result))
+        self.assertNotIn("/login", str(result))
+        self.assertEqual(state._xano_auth_token, "valid-token")
+
+    async def test_get_me_raises_unavailable_only_after_all_attempts_fail(self):
+        def handle(request):
+            raise httpx.ConnectTimeout("lento", request=request)
+
+        real = httpx.AsyncClient
+        with patch("ProjetoLocadora.xano_client.httpx.AsyncClient", side_effect=lambda **kw: real(transport=httpx.MockTransport(handle), **kw)),                 patch("ProjetoLocadora.xano_client._ME_RETRY_DELAY", 0):
+            with self.assertRaises(XanoSessionUnavailable):
+                await get_me_xano("t", base_url="https://xano.test/api")
+
+    async def test_get_me_treats_401_as_definitive_rejection_without_retry(self):
+        calls = []
+
+        def handle(request):
+            calls.append(request)
+            return httpx.Response(401, json={"message": "Unauthorized"})
+
+        real = httpx.AsyncClient
+        with patch("ProjetoLocadora.xano_client.httpx.AsyncClient", side_effect=lambda **kw: real(transport=httpx.MockTransport(handle), **kw)):
+            self.assertIsNone(await get_me_xano("t", base_url="https://xano.test/api"))
+        self.assertEqual(len(calls), 1)
 
     async def test_logout_clears_session_and_redirects_to_login(self):
         state = await rx.State(_reflex_internal_init=True).get_state(State)

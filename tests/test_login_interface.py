@@ -4,13 +4,18 @@ import unittest
 from pathlib import Path
 
 from ProjetoLocadora.ProjetoLocadora import (
+    LOGIN_POSTERS,
+    LOGIN_SUPPORT_ID,
+    LOGIN_WALL_TILES,
     app,
     cassette_badge,
+    login_backdrop,
     login_footer,
     login_form,
     login_header,
     login_page,
     login_panel,
+    login_topbar,
     password_recovery_dialog,
 )
 
@@ -48,6 +53,8 @@ class TestLoginInterfaceStructure(unittest.TestCase):
     def test_reusable_components_render(self):
         for component_factory in (
             cassette_badge,
+            login_backdrop,
+            login_topbar,
             login_header,
             login_form,
             password_recovery_dialog,
@@ -64,16 +71,48 @@ class TestLoginInterfaceStructure(unittest.TestCase):
         for text in (
             "CINEBYTE",
             " LOCADORA",
-            "ACESSO DO FUNCIONÁRIO",
+            "Ajuda",
+            "Acesso do funcionário",
             "Entre para gerenciar o acervo e os aluguéis.",
-            "LOGIN",
-            "SENHA",
+            "Senha",
             "Esqueci minha senha",
-            "ENTRAR NO SISTEMA",
-            "ÁREA RESTRITA • VERSÃO 2.4.8",
+            "Entrar",
+            "Sem acesso? Fale com o administrador da sua loja.",
+            "Acesso restrito a funcionários da CINEBYTE LOCADORA",
         ):
             with self.subTest(text=text):
                 self.assertEqual(contents.count(text), 1)
+
+    def test_email_label_appears_for_login_and_recovery_only(self):
+        contents = _literal_contents(login_page().render())
+
+        self.assertEqual(contents.count("E-mail"), 2)
+
+    def test_page_has_no_fictional_data_or_unsupported_options(self):
+        contents = " ".join(_literal_contents(login_page().render()))
+
+        for text in ("ROTA", "Loja Centro", "rota.com.br", "Manter conectado"):
+            with self.subTest(text=text):
+                self.assertNotIn(text, contents)
+
+    def test_help_link_targets_existing_support_guidance(self):
+        rendered = json.dumps(login_page().render())
+
+        self.assertIn(f"#{LOGIN_SUPPORT_ID}", rendered)
+        self.assertIn(f'id:\\"{LOGIN_SUPPORT_ID}\\"', rendered)
+        self.assertNotIn("mailto:", rendered)
+
+    def test_background_is_a_poster_wall_with_veil_and_vignette(self):
+        source = inspect.getsource(login_backdrop)
+        rendered = json.dumps(login_backdrop().render())
+
+        self.assertIn("vitrine-login__veil", source)
+        self.assertIn("vitrine-login__vignette", source)
+        self.assertEqual(rendered.count("vitrine-login__poster"), LOGIN_WALL_TILES)
+        for poster in LOGIN_POSTERS:
+            with self.subTest(poster=poster):
+                self.assertTrue((ROOT / "assets" / "login-capas" / poster).is_file())
+                self.assertIn(poster, rendered)
 
     def test_login_uses_one_form_submit_path(self):
         source = inspect.getsource(login_form)
@@ -108,7 +147,8 @@ class TestLoginInterfaceStructure(unittest.TestCase):
         stylesheets = list(app.stylesheets)
 
         self.assertIn("/login.css", stylesheets)
-        self.assertTrue(any("Press+Start+2P" in item for item in stylesheets))
+        self.assertTrue(any("family=Inter" in item for item in stylesheets))
+        self.assertFalse(any("Press+Start" in item for item in stylesheets))
         self.assertTrue(any("Space+Mono" in item for item in stylesheets))
 
 
@@ -119,35 +159,38 @@ class TestLoginStyles(unittest.TestCase):
 
     def test_visual_tokens_and_required_dimensions_are_present(self):
         for token in (
-            "#09090f",
-            "#111118",
-            "#0b0b11",
-            "#6d28d9",
-            "#8b2cf5",
-            "#0891b2",
-            "#ff7a45",
-            "width: min(100%, 460px)",
-            "height: 54px",
-            "min-height: 56px",
+            "#07070a",
+            "#dc2638",
+            "rgba(7, 7, 10, 0.7)",
+            "backdrop-filter: blur(48px)",
+            "width: min(100%, 420px)",
+            "height: 48px",
+            "radial-gradient",
+            "rotate(-8deg)",
+            '"Inter"',
+            '"Space Mono"',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.css)
 
     def test_css_is_scoped_and_supports_interaction_and_responsiveness(self):
         for selector in (
-            ".retro-login",
-            ".retro-login__panel",
+            ".vitrine-login",
+            ".vitrine-login__panel",
+            ".vitrine-login__topbar",
             ":focus-visible",
             ":hover",
             ":active",
             "overflow-x: hidden",
             "overflow-y: auto",
-            "@media (max-width: 480px)",
-            "@media (max-height: 760px)",
+            "@media (max-width: 640px)",
             "@media (prefers-reduced-motion: reduce)",
         ):
             with self.subTest(selector=selector):
                 self.assertIn(selector, self.css)
+
+    def test_css_has_no_legacy_retro_scope(self):
+        self.assertNotIn(".retro-", self.css)
 
 
 if __name__ == "__main__":
