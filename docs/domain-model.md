@@ -176,7 +176,7 @@ Representa o compromisso operacional de disponibilizar um exemplar a um cliente 
 
 A change `registrar-locacao` mantém uma linha de `rental` por cliente e exemplar, com retirada/vencimento UTC, `status=active`, usuário responsável e chave de operação única por conta. Rótulos de cliente/exemplar/filme são preservados no instante da retirada. `rental_occupancy` mantém exclusividade por exemplar, criada na mesma transação; não substitui nem apaga o histórico. Repetição da mesma conta/chave e conteúdo retorna a locação original. Retirada, status e responsável não são campos editáveis do formulário.
 
-O schema e os contratos foram implantados em `v1`, com escritas desabilitadas; a integração Reflex permanece local. Índices, bloqueios e rollback precisam de homologação comportamental autorizada antes de habilitar escrita. Este recorte não permite encerrar, cancelar, excluir ou alterar prazo de locação e não gera cobrança ou multa. O futuro fluxo de devolução deverá liberar a ocupação e encerrar a locação atomicamente, conservando o registro original.
+O schema e os contratos foram implantados em `v1`, com escritas desabilitadas; a integração Reflex permanece local. A homologação real de concorrência, idempotência e rollback foi executada e está registrada na change `registrar-locacao`; a liberação usa gates explícitos de configuração. Este recorte não permite encerrar, cancelar, excluir ou alterar prazo de locação e não gera cobrança ou multa. O futuro fluxo de devolução deverá liberar a ocupação e encerrar a locação atomicamente, conservando o registro original.
 
 ### Devolução
 

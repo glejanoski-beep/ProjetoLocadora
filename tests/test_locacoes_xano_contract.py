@@ -73,10 +73,16 @@ def check_create(source):
     assert not list(calls(transaction, "function.run"))
     assert "$auth.id" in flat and "$input.registered_by" not in flat
     assert len(list(calls(stack, "db.query"))) >= 3  # chave inicial, reconciliação externa, auditoria
-    # O validador local aceita nomes dinâmicos; o parser remoto os recusa.
-    for _, operation in calls(stack, "throw"):
-        name = unique_assignment(operation, "name")
-        assert isinstance(name, str) and name.startswith('"') and name.endswith('"')
+    # No runtime, throw customizado encerrou conflito como HTTP 200.
+    assert not list(calls(stack, "throw")), "Usar precondition com erro HTTP explícito"
+    for _, operation in calls(stack, "precondition"):
+        try:
+            message = unique_assignment(operation, "error")
+        except AssertionError:
+            continue
+        if message in ('"Exemplar já possui locação ativa."', '"Chave já utilizada para outra operação."'):
+            assert unique_assignment(operation, "error_type") == '"inputerror"'
+
 
 
 class TestRentalXanoContract(unittest.TestCase):
@@ -85,6 +91,12 @@ class TestRentalXanoContract(unittest.TestCase):
 
     def test_creation_security_and_atomic_unit(self):
         check_create(self.source("api/locacoes/locacoes_POST.xs"))
+
+    def test_rejects_custom_throw_that_can_return_http_200(self):
+        source = self.source("api/locacoes/locacoes_POST.xs")
+        unsafe = source.replace('error_type = "standard"', 'error_type = "standard"\n                    throw { name = "RentalConflict" value = "conflito" }', 1)
+        with self.assertRaises(AssertionError):
+            check_create(unsafe)
 
     def test_rejects_missing_lock_on_each_related_record(self):
         source = self.source("api/locacoes/locacoes_POST.xs")

@@ -85,3 +85,12 @@ operacionais, não uma nova autorização genérica.
 
 A branch e o PR não devem ser encerrados como entrega concluída antes dessas
 verificações de integridade.
+
+## Resultado da homologação autorizada — 23/10/2026
+
+A indicação de dados e contas foi recebida, assim como autorização específica de
+geração dos tokens de teste. Ver `homologation.md` para os cenários executados,
+o defeito de resposta HTTP descoberto/corrigido, as duas locações reais preservadas,
+a prova de rollback e os limites de cobertura. A API temporária foi retirada.
+Os critérios de tarefas foram atualizados com a evidência real. As pendências de
+indicação de dados registradas nas seções anteriores são históricas e foram resolvidas.

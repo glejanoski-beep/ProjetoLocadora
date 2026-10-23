@@ -85,9 +85,9 @@ query "locacoes" verb=POST {
               } as $occupied
               conditional {
                 if ($occupied) {
-                  throw {
-                    name = "RentalConflict"
-                    value = "Exemplar já possui locação ativa."
+                  precondition (false) {
+                    error_type = "inputerror"
+                    error = "Exemplar já possui locação ativa."
                   }
                 }
               }
@@ -143,17 +143,17 @@ query "locacoes" verb=POST {
             var.update $rental { value = $committed }
           }
           else {
-            // A corrida pode terminar como falha de índice, não como throw
-            // explícito. Classificar somente depois do rollback/reconciliação.
+            // A corrida pode terminar como falha de índice, não como validação
+            // explícita. Classificar somente depois do rollback/reconciliação.
             db.has rental_occupancy {
               field_name = "exemplar_id"
               field_value = $input.exemplar_id
             } as $now_occupied
             conditional {
               if ($now_occupied) {
-                throw {
-                  name = "RentalConflict"
-                  value = "Exemplar já possui locação ativa."
+                precondition (false) {
+                  error_type = "inputerror"
+                  error = "Exemplar já possui locação ativa."
                 }
               }
               else {
@@ -165,11 +165,11 @@ query "locacoes" verb=POST {
                     }
                   }
                   else {
-                    // O parser do servidor exige nome de exceção literal.
+                    // Erro HTTP explícito: throw customizado pode encerrar como HTTP 200.
                     // Não devolver detalhes internos de falha do banco.
-                    throw {
-                      name = "RentalOperationFailed"
-                      value = "Não foi possível confirmar a operação. Consulte a tentativa antes de repetir."
+                    precondition (false) {
+                      error_type = "standard"
+                      error = "Não foi possível confirmar a operação. Consulte a tentativa antes de repetir."
                     }
                   }
                 }
@@ -181,9 +181,9 @@ query "locacoes" verb=POST {
     }
     conditional {
       if ($rental.customer_id != $input.customer_id || $rental.exemplar_id != $input.exemplar_id || $rental.due_at != $due_at) {
-        throw {
-          name = "RentalConflict"
-          value = "Chave já utilizada para outra operação."
+        precondition (false) {
+          error_type = "inputerror"
+          error = "Chave já utilizada para outra operação."
         }
       }
     }

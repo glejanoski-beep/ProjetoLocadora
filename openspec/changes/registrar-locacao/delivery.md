@@ -2,9 +2,9 @@
 
 ## Estado
 
-Implementação na branch `codex/registrar-locacao`, baseada em `origin/main` `1a21fc8`. Após APPLY local e autorização explícita de implantação, os recursos de produção foram publicados no Xano `v1` em 22/10/2026. A variável `XANO_RENTAL_WRITES_ENABLED` foi criada no painel com valor textual `false`, reaberta e conferida. Nenhuma locação ou ocupação foi criada; não houve backfill, push Git, PR ou merge.
+Implementação na branch `codex/registrar-locacao`, baseada em `origin/main` `1a21fc8`. Após APPLY local e autorização explícita de implantação, os recursos de produção foram publicados no Xano `v1` em 22/10/2026. A variável `XANO_RENTAL_WRITES_ENABLED` foi criada no painel com valor textual `false`, reaberta e conferida. A homologação posterior está em `homologation.md`; foram preservadas duas locações reais e respectivas ocupações. Não houve backfill de disponibilidade.
 
-Frontend e transporte locais estão implementados e compilam. Backend publicado com duas tabelas, quatro campos aditivos em exemplar, um grupo, cinco endpoints e uma função. A homologação comportamental remota permanece pendente; a change não está pronta para arquivamento nem liberação operacional. Ver `deployment.md` para evidências e identidade real do grupo.
+Frontend e transporte locais estão implementados e compilam. Backend publicado com duas tabelas, quatro campos aditivos em exemplar, um grupo, cinco endpoints e uma função. A homologação comportamental foi concluída nos cenários registrados em `homologation.md`, com limites explícitos. A janela de escrita foi fechada ao terminar. Ver `deployment.md` para evidências e identidade real do grupo.
 
 ## Comportamento implementado localmente
 
@@ -57,7 +57,7 @@ XANO_RENTAL_WRITES_ENABLED=false
 
 Ausência ou URL inválida informa indisponibilidade, sem usar outro grupo como fallback. A variável de escrita existe independentemente no frontend e no Xano; ambas precisam de liberação deliberada. Leituras e reconciliação continuam possíveis quando as escritas forem desabilitadas. A variável Xano já foi criada e conferida como `false`; não habilitar antes da homologação.
 
-## Plano executável de homologação, ainda não executado
+## Procedimento de homologação (resultados em homologation.md)
 
 `python -m scripts.verify_rental_integrity` mostra o plano sem abrir conexão. `--help` descreve os argumentos. Somente `--execute` faz chamadas de escrita. Tokens são lidos de `LOCADORA_VALIDATION_TOKEN_A` e, para corrida entre contas, `LOCADORA_VALIDATION_TOKEN_B`; nunca passá-los na linha de comando ou registrar seus valores. A configuração real dos grupos existentes também é necessária para revalidar contas/clientes. O script só aceita IDs indicados pelo operador, verifica dados reais antes do envio e não cria clientes, filmes ou exemplares. As chaves de correlação são informadas antes do envio para permitir reconciliação se a conexão cair.
 
@@ -81,8 +81,8 @@ Ausência ou URL inválida informa indisponibilidade, sem usar outro grupo como 
 ## Validação local
 
 - Python 3.11 e Reflex **0.9.11**, correspondente ao `requirements.txt`. Ambiente existente foi reutilizado por link `.venv`, sem reinstalar pacotes nem alterar o checkout original.
-- **175 testes** na descoberta principal, incluindo **48 novos** de locação (domínio/configuração/transporte, estado real Reflex e contratos estáticos Xano).
-- **52 testes** adicionais dos cadastros aprovados; cinco métodos específicos de Windows excluídos conforme limitação já registrada em `inspection.md`. Total confirmado: **227 testes**; não se declara aprovação desses cinco.
+- **176 testes** na descoberta principal, incluindo **48 novos** de locação (domínio/configuração/transporte, estado real Reflex e contratos estáticos Xano).
+- **52 testes** adicionais dos cadastros aprovados; cinco métodos específicos de Windows excluídos conforme limitação já registrada em `inspection.md`. Total confirmado: **228 testes**; não se declara aprovação desses cinco.
 - `reflex compile --dry`: compilação concluída. Sem servidor iniciado ou teste visual de navegador. A formatação automática de `reflex.lock/package.json` produzida pelo compilador foi revertida para manter o diff focado.
 - Validador XanoScript: os dez arquivos de produção novos/alterados e o harness temporário são sintaticamente válidos. Validação não executa o banco.
 - Verificação do script de homologação executada somente no modo padrão sem conexão; não foram usados tokens de validação nem efetuadas escritas de negócio. A implantação posterior de schemas/APIs/configuração está registrada em `deployment.md`.
