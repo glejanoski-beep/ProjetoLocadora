@@ -39,10 +39,7 @@ query "clientes" verb=POST {
     var $telefone_resto {
       value = $telefone|replace:"0":""|replace:"1":""|replace:"2":""|replace:"3":""|replace:"4":""|replace:"5":""|replace:"6":""|replace:"7":""|replace:"8":""|replace:"9":""
     }
-    precondition (
-      $input.telefone == null || $input.telefone == ""
-      || ($telefone_resto == "" && (($telefone|strlen) == 10 || ($telefone|strlen) == 11))
-    ) {
+    precondition ($input.telefone == null || $input.telefone == "" || ($telefone_resto == "" && (($telefone|strlen) == 10 || ($telefone|strlen) == 11))) {
       error_type = "inputerror"
       error = "Telefone brasileiro inválido."
     }

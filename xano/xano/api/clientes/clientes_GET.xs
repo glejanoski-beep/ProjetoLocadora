@@ -37,10 +37,7 @@ query "clientes" verb=GET {
     }
 
     db.query customer {
-      where = (
-        ($input.nome == null || $input.nome == "" || ($db.customer.nome|to_lower|includes:($input.nome|to_lower)))
-        && ($cpf_filter == "" || $db.customer.cpf == $cpf_filter)
-      )
+      where = ($input.nome == null || $input.nome == "" || $db.customer.nome includes $input.nome) && ($cpf_filter == "" || $db.customer.cpf == $cpf_filter)
       sort = {customer.nome: "asc"}
       return = {type: "list", paging: {page: $input.page, per_page: $per_page, totals: true, metadata: true}}
       output = ["items.id", "items.nome", "items.cpf", "items.status", "items.bloqueio_manual_ativo", "curPage", "itemsTotal"]

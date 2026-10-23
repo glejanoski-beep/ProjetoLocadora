@@ -361,12 +361,13 @@ Representa a classificação usada atualmente para determinar quais operações 
 | Consultar clientes, filmes e exemplares | Permitido | Permitido |
 | Cadastrar, editar, inativar ou excluir clientes, filmes e exemplares | Não permitido | Permitido, respeitadas as regras de negócio e a preservação do histórico |
 | Incluir locações | Permitido, sujeito às regras de negócio | Permitido, sujeito às regras de negócio |
+| Registrar devoluções | Permitido, sujeito às regras de negócio | Permitido, sujeito às regras de negócio |
 | Registrar pagamentos conforme o saldo e a obrigação | Permitido | Permitido |
 | Registrar multas conforme a política de cálculo | Permitido | Permitido |
 | Gerir papéis e estado de acesso | Não permitido | Permitido |
 | Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
 
-Devoluções, reservas, relatórios e operações ainda não especificadas não recebem permissão por analogia; suas Changes devem definir os papéis autorizados. Esta matriz define a política, mas não significa que os respectivos módulos ou endpoints já estejam implementados.
+Reservas, relatórios e operações ainda não especificadas não recebem permissão por analogia; suas Changes devem definir os papéis autorizados. Esta matriz define a política, mas não significa que os respectivos módulos ou endpoints já estejam implementados.
 
 ### Registro de evento
 

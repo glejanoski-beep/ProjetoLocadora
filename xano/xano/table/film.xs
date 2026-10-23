@@ -14,6 +14,12 @@ table film {
     enum status?=active {
       values = ["active", "inactive"]
     }
+
+    // Capa opcional no storage do Xano (acesso público); objeto completo do storage.
+    image? capa?
+
+    // Alternativa sem storage: link https de uma imagem externa.
+    text capa_link? filters=trim|max:500
   }
 
   index = [

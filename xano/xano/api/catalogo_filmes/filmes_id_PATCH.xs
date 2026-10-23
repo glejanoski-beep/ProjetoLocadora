@@ -35,10 +35,7 @@ query "catalogo-filmes/filmes/{id}" verb=PATCH {
       error = "Gênero obrigatório, com até 100 caracteres."
     }
 
-    precondition (
-      $input.ano_lancamento >= 1888
-      && $input.ano_lancamento <= (now|format_timestamp:"Y":"UTC"|to_int)
-    ) {
+    precondition ($input.ano_lancamento >= 1888 && $input.ano_lancamento <= (now|format_timestamp:"Y":"UTC"|to_int)) {
       error_type = "inputerror"
       error = "Ano de lançamento fora do intervalo permitido."
     }
@@ -69,7 +66,7 @@ query "catalogo-filmes/filmes/{id}" verb=PATCH {
         valor_locacao_centavos: $input.valor_locacao_centavos
         status: $input.status
       }
-      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status"]
+      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status", "capa", "capa_link"]
     } as $film
 
     var $audit_succeeded { value = true }

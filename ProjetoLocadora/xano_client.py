@@ -1,15 +1,18 @@
 import asyncio
 import json
 import logging
+import os
+import re
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, Optional
-from urllib.parse import quote
+import tempfile
+from typing import Any, Dict, NamedTuple, Optional
+from urllib.parse import quote, urlsplit
 
 import httpx
 
-from ProjetoLocadora.catalogo_filmes import Filme
+from ProjetoLocadora.catalogo_filmes import Filme, capa_link_valido
 from ProjetoLocadora.clientes import ClienteDetalhe, ClienteResumo, PaginaClientes
 from ProjetoLocadora.exemplares import Exemplar, ExemplarCadastro
 from ProjetoLocadora.config import (
@@ -38,12 +41,42 @@ class XanoAuditError(XanoCatalogError):
     """O Xano persistiu o filme, mas não confirmou o evento de auditoria."""
 
 
+# Plano atual do Xano: 10 requisições a cada 20 s; o 429 informa Retry-After: 20.
+RATE_LIMIT_DEFAULT_WAIT = 20
+
+
+def retry_after_seconds(response: httpx.Response) -> int:
+    """Espera indicada pelo Xano em um 429; o transporte curl não repassa o cabeçalho."""
+    try:
+        wait = int(response.headers.get("retry-after", ""))
+    except ValueError:
+        wait = RATE_LIMIT_DEFAULT_WAIT
+    return min(max(wait, 1), 120)
+
+
+def rate_limit_message(wait: int) -> str:
+    return (
+        "O Xano atingiu o limite de requisições do plano. "
+        f"Aguarde {wait} s e tente novamente."
+    )
+
+
+class XanoSessionUnavailable(Exception):
+    """Falha transitória ao confirmar a sessão; não prova que o token é inválido."""
+
+    def __init__(self, message: str = "", retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class XanoCustomerError(Exception):
     """Falha explícita em uma operação de clientes no Xano."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, retry_after: Optional[int] = None, status: Optional[int] = None):
         super().__init__(message)
         self.user_message = message
+        self.retry_after = retry_after
+        self.status = status
 
 
 class XanoCustomerAuditError(XanoCustomerError):
@@ -53,9 +86,11 @@ class XanoCustomerAuditError(XanoCustomerError):
 class XanoExemplarError(Exception):
     """Falha explícita em uma operação de exemplares no Xano."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, retry_after: Optional[int] = None, status: Optional[int] = None):
         super().__init__(message)
         self.user_message = message
+        self.retry_after = retry_after
+        self.status = status
 
 
 class XanoExemplarAuditError(XanoExemplarError):
@@ -175,6 +210,15 @@ def _curl_config_value(value: str) -> str:
     return f'"{escaped}"'
 
 
+class UploadPart(NamedTuple):
+    """Arquivo único de um envio multipart; o nome é gerado pela aplicação."""
+
+    field: str
+    filename: str
+    content: bytes
+    mime: str
+
+
 async def _authenticated_request(
     method: str,
     url: str,
@@ -182,13 +226,23 @@ async def _authenticated_request(
     *,
     params: Optional[dict[str, str]] = None,
     json_body: Optional[dict[str, Any]] = None,
+    upload: Optional[UploadPart] = None,
 ) -> httpx.Response:
     headers = _authenticated_headers(auth_token)
     if params:
         url = str(httpx.URL(url, params=params))
+    # Envio de arquivo leva mais que uma leitura JSON.
+    timeout = 30 if upload else 10
 
     if not _WINDOWS:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=float(timeout)) as client:
+            if upload:
+                return await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    files={upload.field: (upload.filename, upload.content, upload.mime)},
+                )
             return await client.request(
                 method,
                 url,
@@ -204,8 +258,21 @@ async def _authenticated_request(
         f"url = {_curl_config_value(url)}",
         f"request = {_curl_config_value(method)}",
         f"header = {_curl_config_value('Authorization: ' + headers['Authorization'])}",
-        f"header = {_curl_config_value('Content-Type: application/json')}",
     ]
+    upload_path = ""
+    if upload:
+        # O curl lê o arquivo do disco; o temporário é apagado no finally abaixo.
+        handle, upload_path = tempfile.mkstemp(prefix="xano-upload-")
+        with os.fdopen(handle, "wb") as temporary:
+            temporary.write(upload.content)
+        config_lines.append(
+            "form = "
+            + _curl_config_value(
+                f"{upload.field}=@{upload_path};type={upload.mime};filename={upload.filename}"
+            )
+        )
+    else:
+        config_lines.append(f"header = {_curl_config_value('Content-Type: application/json')}")
     if json_body is not None:
         config_lines.append(
             f"data = {_curl_config_value(json.dumps(json_body, ensure_ascii=False))}"
@@ -219,7 +286,7 @@ async def _authenticated_request(
         "--connect-timeout",
         "10",
         "--max-time",
-        "10",
+        str(timeout),
         "--config",
         "-",
         "--write-out",
@@ -238,7 +305,7 @@ async def _authenticated_request(
             command,
             input=config,
             capture_output=True,
-            timeout=11,
+            timeout=timeout + 1,
             check=False,
         )
     except subprocess.TimeoutExpired as err:
@@ -251,6 +318,12 @@ async def _authenticated_request(
             "Could not start the native Windows authenticated transport.",
             request=request,
         ) from err
+    finally:
+        if upload_path:
+            try:
+                os.unlink(upload_path)
+            except OSError:
+                logger.warning("Não foi possível apagar o arquivo temporário do envio")
 
     body, separator, metadata = result.stdout.rpartition(b"\n__XANO_META__")
     if result.returncode != 0 or not separator:
@@ -303,6 +376,7 @@ async def _catalog_request(
     *,
     params: Optional[dict[str, str]] = None,
     json_body: Optional[dict[str, Any]] = None,
+    upload: Optional[UploadPart] = None,
 ) -> httpx.Response:
     return await _authenticated_request(
         method,
@@ -310,6 +384,7 @@ async def _catalog_request(
         auth_token,
         params=params,
         json_body=json_body,
+        upload=upload,
     )
 
 
@@ -395,7 +470,41 @@ def _is_film(value: Any) -> bool:
         and isinstance(value.get("classificacao"), str)
         and isinstance(value.get("valor_locacao_centavos"), int)
         and isinstance(value.get("status"), str)
+        and (value.get("capa") is None or isinstance(value.get("capa"), dict))
+        and (value.get("capa_link") is None or isinstance(value.get("capa_link"), str))
     )
+
+
+# Caminho público do storage do Xano; qualquer outro formato é tratado como sem capa.
+_COVER_PATH = re.compile(r"/vault/[A-Za-z0-9._~%/-]+")
+
+
+def film_cover_url(cover: Any) -> str:
+    """URL pública da capa: origem da instância Xano + `path` do storage."""
+    if not isinstance(cover, dict) or cover.get("access") not in (None, "public"):
+        return ""
+    path = cover.get("path")
+    if not isinstance(path, str) or not _COVER_PATH.fullmatch(path) or ".." in path:
+        return ""
+    try:
+        base = urlsplit(get_xano_catalog_api_url())
+    except RuntimeError:
+        return ""
+    if base.scheme != "https" or not base.netloc:
+        return ""
+    return f"{base.scheme}://{base.netloc}{path}"
+
+
+def _with_cover_url(film: dict[str, Any]) -> Filme:
+    """Troca o objeto bruto do storage pela URL pronta para exibição.
+
+    O arquivo do storage tem prioridade; sem ele, vale o link externo https.
+    """
+    normalized = {key: value for key, value in film.items() if key not in ("capa", "capa_link")}
+    link = film.get("capa_link")
+    normalized["capa_link"] = link if isinstance(link, str) and capa_link_valido(link) else ""
+    normalized["capa_url"] = film_cover_url(film.get("capa")) or normalized["capa_link"]
+    return normalized
 
 
 def _film_response(response: httpx.Response) -> Filme:
@@ -405,7 +514,7 @@ def _film_response(response: httpx.Response) -> Filme:
         raise XanoCatalogError("O Xano retornou uma resposta inválida para o filme.") from err
     if not _is_film(film):
         raise XanoCatalogError("O Xano retornou uma resposta inválida para o filme.")
-    return film
+    return _with_cover_url(film)
 
 
 def _write_film_response(response: httpx.Response) -> Filme:
@@ -429,7 +538,7 @@ def _write_film_response(response: httpx.Response) -> Filme:
         or not _is_film(result.get("film"))
     ):
         raise XanoCatalogError("O Xano retornou uma resposta inválida para a gravação do filme.")
-    return result["film"]
+    return _with_cover_url(result["film"])
 
 
 async def list_films_xano(
@@ -465,7 +574,7 @@ async def list_films_xano(
         for film in films
     ):
         raise XanoCatalogError("O Xano retornou uma lista de filmes inválida.")
-    return films
+    return [_with_cover_url(film) for film in films]
 
 
 async def get_film_xano(auth_token: str, film_id: int) -> Filme:
@@ -525,6 +634,84 @@ async def update_film_xano(
     return _write_film_response(response)
 
 
+def _raise_cover_http_error(response: httpx.Response, *, operation: str) -> None:
+    """Mensagens próprias da capa para 400/422 e 429; o restante segue o catálogo."""
+    if response.status_code == 429:
+        wait = retry_after_seconds(response)
+        logger.warning("Capa: limite de requisições do Xano (HTTP 429; aguardar %s s)", wait)
+        raise XanoCatalogError(rate_limit_message(wait))
+    if response.status_code in (400, 413, 422):
+        logger.warning("Capa recusada pelo Xano (HTTP %s)", response.status_code)
+        raise XanoCatalogError("A capa não foi aceita: use uma imagem JPEG, PNG ou WebP com até 2 MB.")
+    if response.status_code == 403:
+        # O plano do Xano sem storage de arquivos responde 403 "please upgrade";
+        # não é falta de permissão do usuário.
+        try:
+            detail = response.json().get("message", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        if isinstance(detail, str) and "upgrade" in detail.casefold():
+            logger.warning("Capa: o plano do Xano não oferece armazenamento de arquivos")
+            raise XanoCatalogError(
+                "O plano atual do Xano não permite armazenar arquivos, então a capa não pode ser enviada."
+            )
+    _raise_catalog_http_error(response, film_not_found=True, operation=operation)
+
+
+async def upload_film_cover_xano(
+    auth_token: str, film_id: int, content: bytes, mime: str, extension: str
+) -> Filme:
+    """Envia a capa já validada; o nome do arquivo é gerado, nunca o do usuário."""
+    upload = UploadPart("capa", f"capa-{film_id}.{extension}", content, mime)
+    try:
+        response = await _catalog_request(
+            "POST",
+            f"/{quote(str(film_id), safe='')}/capa",
+            auth_token,
+            upload=upload,
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao enviar capa: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível enviar a capa ao Xano.") from err
+
+    _raise_cover_http_error(response, operation="POST catalogo-filmes/filmes/{id}/capa")
+    return _write_film_response(response)
+
+
+async def set_film_cover_link_xano(auth_token: str, film_id: int, link: str) -> Filme:
+    """Grava (ou limpa, com vazio) o link externo da capa; não usa o storage do Xano."""
+    try:
+        response = await _catalog_request(
+            "PUT",
+            f"/{quote(str(film_id), safe='')}/capa-link",
+            auth_token,
+            json_body={"capa_link": link},
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao gravar link da capa: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível gravar o link da capa no Xano.") from err
+
+    if response.status_code in (400, 422):
+        raise XanoCatalogError("Informe um link https válido para a imagem da capa.")
+    _raise_cover_http_error(response, operation="PUT catalogo-filmes/filmes/{id}/capa-link")
+    return _write_film_response(response)
+
+
+async def remove_film_cover_xano(auth_token: str, film_id: int) -> Filme:
+    try:
+        response = await _catalog_request(
+            "DELETE",
+            f"/{quote(str(film_id), safe='')}/capa",
+            auth_token,
+        )
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede ao remover capa: %s", type(err).__name__)
+        raise XanoCatalogError("Não foi possível remover a capa no Xano.") from err
+
+    _raise_cover_http_error(response, operation="DELETE catalogo-filmes/filmes/{id}/capa")
+    return _write_film_response(response)
+
+
 def _raise_customer_http_error(
     response: httpx.Response,
     *,
@@ -544,6 +731,10 @@ def _raise_customer_http_error(
             if isinstance(raw_message, str):
                 response_message = raw_message.casefold()
 
+    if response.status_code == 429:
+        wait = retry_after_seconds(response)
+        logger.warning("Clientes: limite de requisições do Xano (HTTP 429; aguardar %s s)", wait)
+        raise XanoCustomerError(rate_limit_message(wait), retry_after=wait)
     if response.status_code in (401, 403):
         message = "Você não tem permissão para realizar esta operação."
     elif response.status_code == 404 and customer_not_found:
@@ -579,7 +770,7 @@ def _raise_customer_http_error(
     else:
         message = "Não foi possível concluir a operação de clientes."
     logger.warning("Operação de clientes recusada pelo Xano (HTTP %s)", response.status_code)
-    raise XanoCustomerError(message)
+    raise XanoCustomerError(message, status=response.status_code)
 
 
 def _is_customer_summary(value: Any) -> bool:
@@ -836,12 +1027,20 @@ async def login_xano(
         return None
 
 
+# Cada tentativa consome a cota do plano; repetir só falha de rede/5xx, uma vez.
+_ME_ATTEMPTS = 2
+_ME_RETRY_DELAY = 0.4
+
+
 async def get_me_xano(
     auth_token: str, base_url: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Consulta a identidade autenticada no endpoint GET /auth/me do Xano.
 
-    Retorna o dicionário com os dados do usuário ou None se a requisição falhar/expirar.
+    Retorna o dicionário com os dados do usuário, ou None quando o Xano rejeita o
+    token ou responde de forma inválida. Falhas de rede e 5xx são repetidas uma
+    vez; um 429 não é repetido (repetir consumiria a cota). Se persistirem,
+    levantam XanoSessionUnavailable para não descartar a sessão.
     """
     if not auth_token:
         return None
@@ -852,21 +1051,35 @@ async def get_me_xano(
         logger.error("Erro ao obter URL da API Xano: %s", err)
         return None
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{url}/auth/me",
-                headers={"Authorization": f"Bearer {auth_token}"},
-            )
-            if response.status_code == 200:
-                return response.json()
+    for attempt in range(_ME_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_ME_RETRY_DELAY * attempt)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{url}/auth/me",
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                )
+        except httpx.HTTPError as err:
+            logger.warning("Falha de rede ao consultar auth/me no Xano: %s", type(err).__name__)
+            continue
+        except Exception as err:
+            logger.error("Erro inesperado ao consultar auth/me no Xano: %s", type(err).__name__)
             return None
-    except httpx.HTTPError as err:
-        logger.warning("Falha de rede ao consultar auth/me no Xano: %s", type(err).__name__)
-        return None
-    except Exception as err:
-        logger.error("Erro inesperado ao consultar auth/me no Xano: %s", type(err).__name__)
-        return None
+        if response.status_code == 429:
+            wait = retry_after_seconds(response)
+            logger.warning("auth/me: limite de requisições do Xano (HTTP 429; aguardar %s s)", wait)
+            raise XanoSessionUnavailable(rate_limit_message(wait), retry_after=wait)
+        if response.status_code >= 500:
+            logger.warning("auth/me indisponível no Xano (HTTP %s)", response.status_code)
+            continue
+        if response.status_code != 200:
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            return None
+    raise XanoSessionUnavailable("Não foi possível confirmar a sessão no Xano.")
 
 
 async def request_password_reset(email: str, base_url: Optional[str] = None) -> bool:
@@ -980,6 +1193,10 @@ def _raise_exemplar_http_error(
 ) -> None:
     if response.is_success:
         return
+    if response.status_code == 429:
+        wait = retry_after_seconds(response)
+        logger.warning("Exemplares: limite de requisições do Xano (HTTP 429; aguardar %s s)", wait)
+        raise XanoExemplarError(rate_limit_message(wait), retry_after=wait)
 
     response_message = ""
     if response.status_code in (400, 409, 422):
@@ -1029,7 +1246,7 @@ def _raise_exemplar_http_error(
         "Operação de exemplares recusada pelo Xano (HTTP %s)",
         response.status_code,
     )
-    raise XanoExemplarError(message)
+    raise XanoExemplarError(message, status=response.status_code)
 
 
 def _is_exemplar(value: Any) -> bool:

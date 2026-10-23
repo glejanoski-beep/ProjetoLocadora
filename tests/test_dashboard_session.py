@@ -14,6 +14,22 @@ from ProjetoLocadora.dashboard_client import DashboardErrorCategory, XanoDashboa
 from tests.test_dashboard_state import ME, SUMMARY, consume
 
 
+_FILMS_PATCH = patch(
+    "ProjetoLocadora.dashboard_state.list_films_xano",
+    new_callable=AsyncMock,
+    return_value=[],
+)
+
+
+def setUpModule():
+    # A distribuição por gênero consulta o catálogo; nenhum teste usa a rede.
+    _FILMS_PATCH.start()
+
+
+def tearDownModule():
+    _FILMS_PATCH.stop()
+
+
 class TestDashboardSession(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.root = rx.State(_reflex_internal_init=True)
@@ -60,6 +76,8 @@ class TestDashboardSession(unittest.IsolatedAsyncioTestCase):
             with self.subTest(me=me):
                 self.dashboard.total_filmes = 77
                 self.session.films_error = "unchanged"
+                # Cada caso começa sem conferência recente reaproveitável (janela de 15 s).
+                self.session._forget_session_check()
                 with patch("ProjetoLocadora.ProjetoLocadora.get_me_xano", AsyncMock(return_value=me)):
                     await self.session.require_session()
                 self.assert_cleared()
@@ -111,10 +129,14 @@ class TestDashboardSession(unittest.IsolatedAsyncioTestCase):
                 with patch("ProjetoLocadora.ProjetoLocadora.get_me_xano", AsyncMock(return_value=me)) as guard, patch(
                     "ProjetoLocadora.dashboard_state.get_me_xano", AsyncMock(return_value=me),
                 ), patch("ProjetoLocadora.dashboard_state.get_dashboard_summary_xano", AsyncMock(return_value=SUMMARY)) as api:
-                    event = await self.session.load_dashboard()
+                    events = await self.session.load_dashboard()
                     guard.assert_awaited_once()
                     api.assert_not_awaited()
-                    self.assertEqual(event.handler, DashboardState.load_summary)
+                    # Resumo (restrito ao admin no próprio evento), locações e clientes (member e admin).
+                    self.assertEqual(
+                        [e.handler for e in events],
+                        [DashboardState.load_summary, DashboardState.load_rentals, DashboardState.load_customers],
+                    )
                     await consume(self.dashboard.load_summary())
                     if role == "admin":
                         api.assert_awaited_once()

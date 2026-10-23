@@ -40,17 +40,22 @@ class TestExemplarState(unittest.IsolatedAsyncioTestCase):
     async def test_member_lists_exemplares_without_loading_maintenance_options(self):
         state = authenticated_state("member")
         state.films_error = "estado do catálogo preservado"
+        cover = "https://img.local/capa-42.jpg"
         with patch(
             "ProjetoLocadora.ProjetoLocadora.list_exemplares_xano",
             new=AsyncMock(return_value=[EXEMPLAR]),
         ) as listing, patch(
             "ProjetoLocadora.ProjetoLocadora.list_films_xano",
-            new=AsyncMock(),
+            new=AsyncMock(return_value=[{**FILM, "capa_url": cover}]),
         ) as films:
             await state.load_exemplares()
 
         listing.assert_awaited_once_with("private-token")
-        films.assert_not_awaited()
+        # O catálogo é lido só para as capas: sem opções de manutenção para member.
+        films.assert_awaited_once_with("private-token")
+        self.assertEqual(state.exemplar_films, [])
+        self.assertEqual(state.exemplar_film_options, [])
+        self.assertEqual(state.exemplar_covers, {42: cover})
         self.assertEqual(state.exemplares, [EXEMPLAR])
         self.assertEqual(state.films_error, "estado do catálogo preservado")
         self.assertFalse(state.exemplares_loading)
@@ -140,6 +145,21 @@ class TestExemplarState(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(state.exemplares, [EXEMPLAR])
         self.assertEqual(state.exemplar_films_error, "Catálogo indisponível")
+        self.assertEqual(state.exemplar_covers, {})
+
+    async def test_member_catalog_failure_only_removes_covers(self):
+        state = authenticated_state("member")
+        with patch(
+            "ProjetoLocadora.ProjetoLocadora.list_exemplares_xano",
+            new=AsyncMock(return_value=[EXEMPLAR]),
+        ), patch(
+            "ProjetoLocadora.ProjetoLocadora.list_films_xano",
+            new=AsyncMock(side_effect=XanoCatalogError("Catálogo indisponível")),
+        ):
+            await state.load_exemplares()
+
+        self.assertEqual(state.exemplares, [EXEMPLAR])
+        self.assertEqual((state.exemplar_films_error, state.exemplar_covers), ("", {}))
 
 
 if __name__ == "__main__":

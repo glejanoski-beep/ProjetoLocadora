@@ -205,8 +205,9 @@ query "locacoes" verb=POST {
       }
       else {
         // Não presumir que o evento da requisição original foi confirmado.
+        // Só eventos posteriores a esta locação: ids de locação podem ser reutilizados.
         db.query event_log {
-          where = $db.event_log.user_id == $auth.id && $db.event_log.action == "create_rental" && $db.event_log.metadata.resource_id == $rental.id && $db.event_log.metadata.resource_type == "rental" && $db.event_log.metadata.result == "success"
+          where = $db.event_log.user_id == $auth.id && $db.event_log.action == "create_rental" && $db.event_log.metadata.resource_id == $rental.id && $db.event_log.metadata.resource_type == "rental" && $db.event_log.metadata.result == "success" && $db.event_log.created_at >= $rental.rented_at
           return = {type: "exists"}
         } as $audit_exists
         var.update $audit_succeeded { value = $audit_exists }
@@ -215,7 +216,7 @@ query "locacoes" verb=POST {
     db.get rental {
       field_name = "id"
       field_value = $rental.id
-      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title"]
+      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title", "returned_at", "returned_by"]
     } as $result
   }
   response = {rental: $result, audit_succeeded: $audit_succeeded}

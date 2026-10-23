@@ -18,7 +18,7 @@ query "catalogo-filmes/filmes/{id}" verb=GET {
     db.get film {
       field_name = "id"
       field_value = $input.id
-      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status"]
+      output = ["id", "titulo", "genero", "ano_lancamento", "classificacao", "valor_locacao_centavos", "status", "capa", "capa_link"]
     } as $film
 
     precondition ($film != null) {

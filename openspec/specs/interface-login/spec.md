@@ -6,47 +6,35 @@ Definir a apresentação, a responsividade, a acessibilidade e as interações d
 
 ## Requirements
 
-### Requirement: Tela de login reproduz a identidade retrô da CINEBYTE LOCADORA
+### Requirement: Tela de login reproduz a vitrine de vidro da CINEBYTE LOCADORA
 
-A rota `/login` SHALL ocupar pelo menos toda a altura visível com fundo `#09090F`, textura discreta de linhas horizontais e formas alusivas a estantes de VHS. A composição SHALL exibir um painel vertical central com largura máxima aproximada de 440–460 px, fundo próximo de `#111118`, borda branca de baixa opacidade, sombra escura ampla, cantos retos e quatro cantoneiras claras. O painel SHALL apresentar, nesta ordem, ícone de fita cassete em ciano com moldura roxa, marca “CINEBYTE LOCADORA”, título “ACESSO DO FUNCIONÁRIO”, subtítulo, formulário, ação de recuperação, botão principal, separador e rodapé “ÁREA RESTRITA • VERSÃO 2.4.8”.
+A rota `/login` SHALL ocupar pelo menos toda a altura visível com fundo composto por uma parede inclinada de cartazes de filmes, uma camada escura (`#07070A` a cerca de 70% de opacidade) e uma vinheta radial. Os cartazes SHALL ser elementos decorativos ocultos de tecnologia assistiva, nunca uma imagem única que substitua os controles. A composição SHALL exibir, no canto superior esquerdo, o logotipo e a identificação “CINEBYTE LOCADORA” e, no canto superior direito, o link “Ajuda”. O painel central SHALL ter largura máxima de 420 px, fundo translúcido escuro com desfoque (efeito de vidro), borda branca de baixa opacidade e cantos arredondados, e SHALL apresentar, nesta ordem, título “Acesso do funcionário”, subtítulo, formulário, ação de recuperação, botão principal vermelho (`#DC2638`) e a orientação “Sem acesso? Fale com o administrador da sua loja.”. Um texto discreto “Acesso restrito a funcionários da CINEBYTE LOCADORA” SHALL aparecer ao pé da página. A tela SHALL NOT exibir dados fictícios, nome de outra marca nem opções sem funcionalidade implementada, como “Manter conectado”.
 
 #### Scenario: Composição completa em desktop
 
 - **WHEN** uma pessoa abre `/login` em uma janela de desktop
-- **THEN** todos os elementos obrigatórios aparecem na ordem definida dentro de um único painel central
+- **THEN** cartazes, camada escura, vinheta, identificação, link “Ajuda” e painel central aparecem na composição definida
 - **AND** nenhum menu, dashboard ou elemento alheio à referência é exibido
 
 #### Scenario: Identidade visual carregada
 
 - **WHEN** a tela conclui o carregamento visual
-- **THEN** marca, título e botão usam “Press Start 2P” com fallback monoespaçado
-- **AND** descrição, labels, campos, link e rodapé usam “Space Mono” com fallback monoespaçado
-- **AND** o texto principal, os detalhes em roxo, ciano e laranja e os brilhos discretos permanecem legíveis sobre o fundo escuro
+- **THEN** títulos, labels, campos, botões e textos principais usam “Inter” com fallback sem serifa
+- **AND** somente o texto de rodapé da página usa “Space Mono” com fallback monoespaçado
+- **AND** o texto claro permanece legível sobre o fundo escuro
 
-### Requirement: Composição se adapta sem cortar o formulário
+#### Scenario: Link de ajuda
 
-A tela SHALL manter o painel centralizado horizontalmente, usar espaçamento interno aproximado de 32–40 px no desktop e 24 px no celular e permitir rolagem vertical quando a altura disponível for menor que o painel. Em larguras móveis, o painel SHALL respeitar as margens da viewport, o título e o botão SHALL poder quebrar em linhas e a página SHALL NOT produzir rolagem horizontal, sobreposição ou corte de controles.
-
-#### Scenario: Celular estreito
-
-- **WHEN** `/login` é exibida em uma viewport de aproximadamente 390 px de largura
-- **THEN** o painel ocupa a largura disponível com margens laterais
-- **AND** título, campos e botão permanecem integralmente visíveis e utilizáveis
-- **AND** a largura total da página não excede a viewport
-
-#### Scenario: Tela de pouca altura
-
-- **WHEN** a altura da viewport é menor que a altura do painel
-- **THEN** a pessoa consegue rolar verticalmente até todos os campos, ações e o rodapé
-- **AND** nenhum conteúdo essencial fica preso fora da área alcançável
+- **WHEN** a pessoa ativa “Ajuda”
+- **THEN** a página navega para a orientação de suporte no painel, sem criar rota nem endereço de contato
 
 ### Requirement: Formulário acessível envia o login real por botão ou Enter
 
-O formulário SHALL apresentar os campos rotulados “LOGIN” e “SENHA”, respectivamente com os placeholders “Digite seu usuário” e “Digite sua senha”, ícones de usuário e cadeado e associação acessível entre cada label e seu controle. O valor de login SHALL seguir o identificador aceito pelo backend existente, atualmente o e-mail da conta. O envio pelo botão “ENTRAR NO SISTEMA” ou pela tecla Enter SHALL executar uma única tentativa pelo fluxo real de autenticação e manter as regras de acesso vigentes.
+O formulário SHALL apresentar os campos rotulados “E-mail” e “Senha”, respectivamente com os placeholders “nome@exemplo.com” e “Sua senha” e associação acessível entre cada label e seu controle. O valor de login SHALL seguir o identificador aceito pelo backend existente, atualmente o e-mail da conta. O envio pelo botão “Entrar” ou pela tecla Enter SHALL executar uma única tentativa pelo fluxo real de autenticação e manter as regras de acesso vigentes.
 
 #### Scenario: Envio pelo botão
 
-- **WHEN** a pessoa informa credenciais e ativa “ENTRAR NO SISTEMA”
+- **WHEN** a pessoa informa credenciais e ativa “Entrar”
 - **THEN** a interface envia uma única tentativa ao fluxo de autenticação existente
 - **AND** uma autenticação válida continua redirecionando ao backoffice
 
@@ -63,7 +51,7 @@ O formulário SHALL apresentar os campos rotulados “LOGIN” e “SENHA”, re
 
 ### Requirement: Visibilidade da senha é alternável sem expor a credencial
 
-O campo de senha SHALL oferecer um botão à direita que alterne entre senha oculta e visível, preserve o valor digitado e possua nome acessível coerente com a ação disponível. A senha SHALL permanecer fora do estado público serializado, SHALL NOT ser registrada em logs e SHALL ser descartada do estado privado após cada tentativa de autenticação.
+O campo de senha SHALL oferecer um botão textual à direita (“mostrar”/“ocultar”) que alterne entre senha oculta e visível, preserve o valor digitado e possua nome acessível coerente com a ação disponível. A senha SHALL permanecer fora do estado público serializado, SHALL NOT ser registrada em logs e SHALL ser descartada do estado privado após cada tentativa de autenticação.
 
 #### Scenario: Mostrar e ocultar senha
 
@@ -78,11 +66,11 @@ O campo de senha SHALL oferecer um botão à direita que alterne entre senha ocu
 
 ### Requirement: Validação e carregamento preservam o layout
 
-LOGIN e SENHA SHALL ser obrigatórios. Uma submissão incompleta SHALL exibir mensagem de validação em português sem chamar o backend e sem desmontar, deslocar de forma abrupta ou sobrepor o painel. Durante uma tentativa válida, o botão SHALL indicar carregamento, permanecer desabilitado para novas submissões e conservar dimensões suficientes para evitar mudança perceptível da composição. Erros de autenticação SHALL continuar genéricos e acessíveis.
+E-mail e senha SHALL ser obrigatórios. Uma submissão incompleta SHALL exibir mensagem de validação em português sem chamar o backend e sem desmontar, deslocar de forma abrupta ou sobrepor o painel. Durante uma tentativa válida, o botão SHALL indicar carregamento, permanecer desabilitado para novas submissões e conservar dimensões suficientes para evitar mudança perceptível da composição. Erros de autenticação SHALL continuar genéricos e acessíveis.
 
 #### Scenario: Campos obrigatórios ausentes
 
-- **WHEN** a pessoa envia o formulário sem preencher LOGIN ou SENHA
+- **WHEN** a pessoa envia o formulário sem preencher e-mail ou senha
 - **THEN** a interface informa em português que os campos são obrigatórios
 - **AND** nenhuma requisição de autenticação é iniciada
 
@@ -100,7 +88,7 @@ LOGIN e SENHA SHALL ser obrigatórios. Uma submissão incompleta SHALL exibir me
 
 ### Requirement: Recuperação de senha ocorre em diálogo acessível
 
-A ação sublinhada “Esqueci minha senha”, alinhada à direita, SHALL abrir um diálogo simples com título e descrição acessíveis, campo de e-mail associado ao respectivo label e ações de envio e cancelamento. O envio SHALL reutilizar o endpoint real de recuperação e a resposta pública genérica definida por `recuperacao-segura`; SHALL NOT ser apresentado como demonstração. A rota `/recuperar-senha` SHALL permanecer funcional para compatibilidade e a rota `/redefinir-senha` SHALL continuar consumindo magic links.
+A ação sublinhada “Esqueci minha senha”, alinhada à direita abaixo da senha, SHALL abrir um diálogo simples com título e descrição acessíveis, campo de e-mail associado ao respectivo label e ações de envio e cancelamento. O envio SHALL reutilizar o endpoint real de recuperação e a resposta pública genérica definida por `recuperacao-segura`; SHALL NOT ser apresentado como demonstração. A rota `/recuperar-senha` SHALL permanecer funcional para compatibilidade e a rota `/redefinir-senha` SHALL continuar consumindo magic links.
 
 #### Scenario: Abrir e fechar o diálogo
 
@@ -121,16 +109,16 @@ A ação sublinhada “Esqueci minha senha”, alinhada à direita, SHALL abrir 
 
 ### Requirement: Estados interativos preservam a estética e a legibilidade
 
-Inputs e botão SHALL ter cantos retos. Inputs SHALL usar fundo próximo de `#0B0B11`, altura aproximada de 54 px e borda discreta. O botão principal SHALL ter largura total, altura mínima de 56 px, degradê horizontal baseado em `#6D28D9`, `#8B2CF5`, `#0891B2` e `#FF7A45`, borda clara sutil, brilho roxo e sombra sólida deslocada. Hover, foco e pressionamento SHALL fornecer resposta perceptível sem reduzir contraste, ocultar texto ou alterar a largura da composição.
+Inputs SHALL usar fundo escuro translúcido, altura aproximada de 48 px, cantos arredondados e borda discreta. O botão principal SHALL ter largura total, altura mínima de 50 px e fundo vermelho `#DC2638`. Hover, foco e pressionamento SHALL fornecer resposta perceptível sem reduzir contraste, ocultar texto ou alterar a largura da composição. O diálogo de recuperação SHALL seguir o mesmo tratamento de vidro.
 
 #### Scenario: Interação por ponteiro
 
 - **WHEN** o ponteiro passa sobre ou pressiona um campo, link, controle de senha ou botão
-- **THEN** o elemento apresenta resposta visual coerente com a estética retrô
+- **THEN** o elemento apresenta resposta visual coerente com o tema de vidro
 - **AND** o conteúdo permanece legível e estável
 
 #### Scenario: Foco visível em alto contraste
 
 - **WHEN** um controle recebe foco pelo teclado
-- **THEN** um contorno ou brilho claramente perceptível identifica o foco
+- **THEN** um contorno claramente perceptível identifica o foco
 - **AND** a indicação não depende somente de uma mudança sutil de cor

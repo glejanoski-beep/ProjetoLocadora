@@ -11,7 +11,7 @@ query "locacoes/operacoes/{operation_key}" verb=GET {
     db.query rental {
       where = $db.rental.registered_by == $auth.id && $db.rental.operation_key == $input.operation_key
       return = {type: "single"}
-      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title"]
+      output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title", "returned_at", "returned_by"]
     } as $rental
     precondition ($rental != null) {
       error_type = "notfound"

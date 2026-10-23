@@ -132,6 +132,21 @@ class TestCustomerClient(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(XanoCustomerError, "Já existe"):
                 await create_customer_xano("token", {})
 
+    async def test_429_reports_plan_limit_and_retry_after(self):
+        cases = (
+            (httpx.Response(429, json={}), 20),  # transporte curl não repassa o cabeçalho
+            (httpx.Response(429, headers={"Retry-After": "7"}, json={}), 7),
+        )
+        for response, wait in cases:
+            with self.subTest(wait=wait), patch(
+                "ProjetoLocadora.xano_client._customer_request",
+                new=AsyncMock(return_value=response),
+            ):
+                with self.assertRaises(XanoCustomerError) as error:
+                    await list_customers_xano("token")
+            self.assertEqual(error.exception.retry_after, wait)
+            self.assertIn("limite de requisições", error.exception.user_message)
+
     async def test_reports_customer_audit_partial_success(self):
         with patch(
             "ProjetoLocadora.xano_client._customer_request",

@@ -11,6 +11,22 @@ from ProjetoLocadora.dashboard_state import DashboardState
 from ProjetoLocadora.dashboard_client import DashboardErrorCategory, XanoDashboardError
 
 
+_FILMS_PATCH = patch(
+    "ProjetoLocadora.dashboard_state.list_films_xano",
+    new_callable=AsyncMock,
+    return_value=[],
+)
+
+
+def setUpModule():
+    # A distribuição por gênero consulta o catálogo; nenhum teste usa a rede.
+    _FILMS_PATCH.start()
+
+
+def tearDownModule():
+    _FILMS_PATCH.stop()
+
+
 SUMMARY = {"total_filmes": 3, "total_exemplares": 5, "generated_at": "2026-10-18T15:00:00Z"}
 ME = {"id": 1, "role": "admin", "is_active": True}
 
