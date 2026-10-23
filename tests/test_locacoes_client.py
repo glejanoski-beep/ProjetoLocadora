@@ -20,6 +20,10 @@ RENTAL = {
     "customer_name": "Cliente do teste local", "exemplar_identifier": "LOCAL-2",
     "film_id": 4, "film_title": "Filme do teste local",
 }
+# Contrato com devolução: 13 campos.
+ACTIVE_13 = {**RENTAL, "returned_at": None, "returned_by": None}
+RETURNED = {**RENTAL, "status": "returned", "returned_at": 1893600000000, "returned_by": 9}
+RETURN_KEY = "5d0c2f7e-9a4b-4c1e-8f3d-2b6a7c9e1f40"
 
 
 class TestRentalDomain(unittest.TestCase):
@@ -42,6 +46,26 @@ class TestRentalDomain(unittest.TestCase):
             {**RENTAL, "status": "returned"}, {**RENTAL, "due_at": 10**30},
         ]
         for value in variants:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validar_rental(value)
+
+    def test_return_contract_with_13_fields_is_accepted_and_kept_coherent(self):
+        self.assertEqual(validar_rental(ACTIVE_13), ACTIVE_13)
+        self.assertEqual(validar_rental(RETURNED), RETURNED)
+        incoherent = [
+            {**ACTIVE_13, "returned_at": RETURNED["returned_at"]},          # ativa com data de devolução
+            {**ACTIVE_13, "returned_by": 9},
+            {**RETURNED, "returned_at": None},                              # devolvida sem data
+            {**RETURNED, "returned_by": None},
+            {**RETURNED, "returned_at": RENTAL["rented_at"] - 1},           # devolvida antes da retirada
+            {**RETURNED, "returned_at": str(RETURNED["returned_at"])},      # coerção de tipo
+            {**RETURNED, "returned_by": True},
+            {**RETURNED, "returned_at": 10**30},
+            {**RETURNED, "status": "cancelled"},
+            {**RENTAL, "returned_at": None},                                # 12 campos
+            {**RETURNED, "cpf": "must-not-pass"},
+        ]
+        for value in incoherent:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validar_rental(value)
 
@@ -119,6 +143,20 @@ class TestRentalTransport(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(error.exception.category, category)
             self.assertNotIn("database", str(error.exception))
 
+    async def test_read_429_is_rate_limited_with_retry_after_and_no_retry(self):
+        body = {"code": "ERROR_CODE_TOO_MANY_REQUESTS", "message": "Your plan only supports 10 requests per 20 seconds."}
+        with self.assertRaises(client.RentalError) as error:
+            await self.call(lambda: client.available_exemplars("token", 1, 10), httpx.Response(429, headers={"Retry-After": "20"}, json=body))
+        self.assertEqual(error.exception.category, "ratelimited")
+        self.assertEqual(error.exception.retry_after, 20)
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.requests[0].url.params["per_page"], "10")
+
+    async def test_write_429_stays_unknown_to_force_reconciliation(self):
+        with self.assertRaises(client.RentalError) as error:
+            await self.call(lambda: client.create_rental("token", PAYLOAD), httpx.Response(429, headers={"Retry-After": "20"}))
+        self.assertEqual(error.exception.category, "unknown")
+
     async def test_xano_named_conflict_is_recognized_without_exposing_body(self):
         with self.assertRaises(client.RentalError) as error:
             await self.call(lambda: client.create_rental("token", PAYLOAD), httpx.Response(500, json={"message": "Exemplar já possui locação ativa."}))
@@ -142,6 +180,57 @@ class TestRentalTransport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, RENTAL)
         self.assertEqual(self.requests[-1].method, "GET")
         self.assertTrue(self.requests[-1].url.path.endswith(KEY))
+
+    async def test_returned_rental_is_accepted_by_replay_detail_and_reconciliation(self):
+        created = await self.call(lambda: client.create_rental("token", PAYLOAD), httpx.Response(200, json={"rental": {**RETURNED, "due_at": 1893596400000}, "audit_succeeded": True}))
+        self.assertEqual(created[0]["status"], "returned")
+        self.assertEqual(await self.call(lambda: client.get_rental("token", 3), httpx.Response(200, json=RETURNED)), RETURNED)
+        self.assertEqual(await self.call(lambda: client.get_rental("token", 3), httpx.Response(200, json=ACTIVE_13)), ACTIVE_13)
+        self.assertEqual(await self.call(lambda: client.reconcile_rental("token", KEY), httpx.Response(200, json=RETURNED)), RETURNED)
+
+    async def test_return_posts_only_the_key_once_and_validates_the_result(self):
+        result = await self.call(lambda: client.return_rental("private-secret", 3, RETURN_KEY), httpx.Response(200, json={"rental": RETURNED, "audit_succeeded": True}))
+        self.assertEqual(result, (RETURNED, True))
+        self.assertEqual(len(self.requests), 1)
+        request = self.requests[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.url.path, "/api:rentals/locacoes/3/devolucao")
+        self.assertEqual(json.loads(request.content), {"operation_key": RETURN_KEY})
+        self.assertEqual(request.headers["Authorization"], "Bearer private-secret")
+
+    async def test_return_gate_and_input_send_nothing(self):
+        with patch.dict(os.environ, {"XANO_RENTAL_WRITES_ENABLED": "false"}), self.assertRaises(client.RentalError) as error:
+            await self.call(lambda: client.return_rental("token", 3, RETURN_KEY), httpx.Response(200, json={}))
+        self.assertEqual(error.exception.category, "disabled")
+        for rental_id, key in ((0, RETURN_KEY), (3, "not-a-uuid"), (True, RETURN_KEY)):
+            with self.subTest(rental_id=rental_id, key=key), self.assertRaises(client.RentalError) as error:
+                await self.call(lambda: client.return_rental("token", rental_id, key), httpx.Response(200, json={}))
+            self.assertEqual(error.exception.category, "input")
+        self.assertEqual(self.requests, [])
+
+    async def test_return_error_categories(self):
+        cases = (
+            (httpx.Response(400, json={"message": "Locação já devolvida."}), "conflict"),
+            (httpx.Response(400, json={"message": "Chave já utilizada para outra operação."}), "conflict"),
+            (httpx.Response(404, json={"message": "Locação não encontrada."}), "notfound"),
+            (httpx.Response(404, json={"message": "Unable to locate request."}), "unknown"),  # rota ausente
+            (httpx.Response(401), "authentication"), (httpx.Response(403), "authorization"),
+            (httpx.Response(400, json={"message": "Locação inválida."}), "input"),
+            (httpx.Response(429, headers={"Retry-After": "20"}), "unknown"),
+            (httpx.Response(500), "unknown"), (httpx.ReadTimeout("t"), "unknown"),
+        )
+        for response, category in cases:
+            before = len(self.requests)
+            with self.subTest(response=response), self.assertRaises(client.RentalError) as error:
+                await self.call(lambda: client.return_rental("token", 3, RETURN_KEY), response)
+            self.assertEqual(error.exception.category, category)
+            self.assertEqual(len(self.requests), before + 1)  # sem retry automático
+
+    async def test_return_result_must_be_the_same_rental_and_returned(self):
+        for rental in ({**RETURNED, "id": 4}, ACTIVE_13, RENTAL, {**RETURNED, "returned_at": None}):
+            with self.subTest(rental=rental), self.assertRaises(client.RentalError) as error:
+                await self.call(lambda: client.return_rental("token", 3, RETURN_KEY), httpx.Response(200, json={"rental": rental, "audit_succeeded": True}))
+            self.assertEqual(error.exception.category, "unknown")
 
     async def test_detail_does_not_accept_another_id(self):
         with self.assertRaises(client.RentalError) as error:

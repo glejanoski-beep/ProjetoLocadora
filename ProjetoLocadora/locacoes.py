@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import re
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
 BRASILIA = ZoneInfo("America/Sao_Paulo")
@@ -20,6 +20,13 @@ class Rental(TypedDict):
     exemplar_identifier: str
     film_id: int
     film_title: str
+    # Contrato com devolução (13 campos); ausentes no contrato anterior (11 campos).
+    returned_at: NotRequired[int | None]
+    returned_by: NotRequired[int | None]
+
+
+BASE_FIELDS = frozenset(Rental.__required_keys__)
+RETURN_FIELDS = frozenset({"returned_at", "returned_by"})
 
 
 def vencimento_utc(value: str) -> str:
@@ -48,13 +55,29 @@ def data_brasilia(value: int) -> str:
 
 
 def validar_rental(value: object) -> Rental:
-    fields = set(Rental.__annotations__)
-    if type(value) is not dict or set(value) != fields:
+    """Aceita o contrato anterior (11 campos, só `active`) e o com devolução (13 campos)."""
+    if type(value) is not dict or set(value) not in (BASE_FIELDS, BASE_FIELDS | RETURN_FIELDS):
         raise ValueError("Resposta de locação inválida")
     for key in ("id", "customer_id", "exemplar_id", "registered_by", "film_id", "rented_at", "due_at"):
         if type(value[key]) is not int or value[key] <= 0:
             raise ValueError("Resposta de locação inválida")
-    if value["status"] != "active" or value["due_at"] <= value["rented_at"]:
+    if value["due_at"] <= value["rented_at"]:
+        raise ValueError("Resposta de locação inválida")
+    if RETURN_FIELDS <= set(value):
+        returned_at, returned_by = value["returned_at"], value["returned_by"]
+        if value["status"] == "active":
+            if returned_at is not None or returned_by is not None:
+                raise ValueError("Resposta de locação inválida")
+        elif value["status"] == "returned":
+            if type(returned_at) is not int or returned_at < value["rented_at"]:
+                raise ValueError("Resposta de locação inválida")
+            if type(returned_by) is not int or returned_by <= 0:
+                raise ValueError("Resposta de locação inválida")
+            if data_brasilia(returned_at) == "Data indisponível":
+                raise ValueError("Resposta de locação inválida")
+        else:
+            raise ValueError("Resposta de locação inválida")
+    elif value["status"] != "active":
         raise ValueError("Resposta de locação inválida")
     for key in ("customer_name", "film_title"):
         if not isinstance(value[key], str) or not value[key].strip():

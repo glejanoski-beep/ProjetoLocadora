@@ -8,6 +8,7 @@ import httpx
 
 from ProjetoLocadora.config import get_xano_rental_api_url, rental_writes_enabled
 from ProjetoLocadora.locacoes import Rental, validar_rental
+from ProjetoLocadora.xano_client import retry_after_seconds
 
 
 MESSAGES = {
@@ -21,12 +22,14 @@ MESSAGES = {
     "conflict": "O exemplar foi ocupado ou a chave já pertence a outra operação. Consulte o resultado antes de tentar novamente.",
     "notfound": "Locação não encontrada.",
     "unknown": "Resultado ainda desconhecido. Consulte a tentativa antes de iniciar outra locação.",
+    "ratelimited": "O Xano atingiu o limite de requisições do plano. Aguarde alguns segundos e tente novamente.",
 }
 
 
 class RentalError(Exception):
-    def __init__(self, category: str):
+    def __init__(self, category: str, retry_after: int | None = None):
         self.category = category
+        self.retry_after = retry_after
         super().__init__(MESSAGES[category])
 
 
@@ -69,13 +72,20 @@ async def _request(token: str, method: str, path: str, *, payload=None, params=N
     except (ValueError, UnicodeError, RecursionError):
         data = None
     status = response.status_code
+    if status == 429 and not writing:
+        # O Xano recusou antes de executar; não repetir antes do Retry-After.
+        raise RentalError("ratelimited", retry_after=retry_after_seconds(response))
     if status in (401, 403):
         raise RentalError("authentication" if status == 401 else "authorization")
     if status == 404:
-        # A POST em rota ausente não é motivo para usar outro grupo ou repetir.
-        raise RentalError("unknown" if writing else "notfound")
+        # A POST em rota ausente não é motivo para usar outro grupo ou repetir;
+        # só a mensagem própria do endpoint confirma que a locação não existe.
+        if not writing or (type(data) is dict and data.get("message") == "Locação não encontrada."):
+            raise RentalError("notfound")
+        raise RentalError("unknown")
     if status == 409 or (type(data) is dict and data.get("message") in {
         "Exemplar já possui locação ativa.", "Chave já utilizada para outra operação.",
+        "Locação já devolvida.",
     } and status >= 400):
         raise RentalError("conflict")
     if status in (400, 422):
@@ -127,6 +137,22 @@ async def create_rental(token: str, payload: dict) -> tuple[Rental, bool]:
         raise RentalError("unknown") from None
 
 
+async def return_rental(token: str, rental_id: int, operation_key: str) -> tuple[Rental, bool]:
+    """Registra a devolução; sem retry automático. Repetir usa a mesma chave."""
+    _id(rental_id)
+    key = _key(operation_key)
+    result = await _request(token, "POST", f"locacoes/{rental_id}/devolucao", payload={"operation_key": key})
+    try:
+        if type(result) is not dict or set(result) != {"rental", "audit_succeeded"} or type(result["audit_succeeded"]) is not bool:
+            raise ValueError
+        rental = validar_rental(result["rental"])
+        if rental["id"] != rental_id or rental["status"] != "returned":
+            raise ValueError
+        return rental, result["audit_succeeded"]
+    except (ValueError, TypeError, KeyError):
+        raise RentalError("unknown") from None
+
+
 async def get_rental(token: str, rental_id: int) -> Rental:
     data = await _request(token, "GET", f"locacoes/{_id(rental_id)}")
     try:
@@ -146,14 +172,45 @@ async def reconcile_rental(token: str, key: str) -> Rental:
         raise RentalError("invalid") from None
 
 
-async def available_exemplars(token: str, page: int = 1) -> dict:
-    data = await _request(token, "GET", "locacoes/exemplares-disponiveis", params={"page": _id(page), "per_page": 20})
+async def list_rentals(token: str, page: int = 1, per_page: int = 10, status: str = "") -> dict:
+    """Página de locações registradas; cada item segue o mesmo contrato do detalhe.
+
+    `status` ("active" ou "returned") filtra no Xano; vazio lista todas.
+    """
+    if status not in ("", "active", "returned"):
+        raise RentalError("input")
+    params = {"page": _id(page), "per_page": _id(per_page)}
+    if status:
+        params["status"] = status
+    data = await _request(token, "GET", "locacoes", params=params)
     try:
         if type(data) is not dict or set(data) != {"items", "page", "per_page", "total"}:
             raise ValueError
         if any(type(data[k]) is not int for k in ("page", "per_page", "total")):
             raise ValueError
-        if data["page"] != page or data["per_page"] != 20 or data["total"] < 0 or type(data["items"]) is not list or len(data["items"]) > 20:
+        if data["page"] != page or data["per_page"] != per_page or type(data["items"]) is not list or len(data["items"]) > per_page:
+            raise ValueError
+        if data["total"] < len(data["items"]):
+            raise ValueError
+        items = [validar_rental(item) for item in data["items"]]
+        if len({item["id"] for item in items}) != len(items):
+            raise ValueError
+        # Filtro ignorado pelo serviço não pode misturar as abas.
+        if status and any(item["status"] != status for item in items):
+            raise ValueError
+        return {"items": items, "page": page, "per_page": per_page, "total": data["total"]}
+    except (ValueError, TypeError, KeyError):
+        raise RentalError("invalid") from None
+
+
+async def available_exemplars(token: str, page: int = 1, per_page: int = 20) -> dict:
+    data = await _request(token, "GET", "locacoes/exemplares-disponiveis", params={"page": _id(page), "per_page": _id(per_page)})
+    try:
+        if type(data) is not dict or set(data) != {"items", "page", "per_page", "total"}:
+            raise ValueError
+        if any(type(data[k]) is not int for k in ("page", "per_page", "total")):
+            raise ValueError
+        if data["page"] != page or data["per_page"] != per_page or data["total"] < 0 or type(data["items"]) is not list or len(data["items"]) > per_page:
             raise ValueError
         seen = set()
         for item in data["items"]:
