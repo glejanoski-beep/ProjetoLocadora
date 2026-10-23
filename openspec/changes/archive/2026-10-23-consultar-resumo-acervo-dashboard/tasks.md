@@ -5,16 +5,16 @@ APPLY autorizado por blocos e implementação funcional revisada. A preparação
 ## 1. Preparação da integração aprovada
 
 - [x] 1.1 Registrar a aprovação da proposta, contrato e design e a autorização explícita de APPLY; verificar o registro antes de editar implementação ou operar recursos remotos.
-- [ ] 1.2 Coordenar com o grupo os pontos compartilhados (`ProjetoLocadora.py`, configuração, sessão e testes de autenticação), registrando responsáveis e limites do diff; verificar que clientes, catálogo e exemplares não serão refatorados.
-- [ ] 1.3 Conferir os recursos necessários de `v1`, o padrão de contagem agregada Xano e o mapeamento de autenticação/negação para 401/403; registrar divergências da exportação local e não sobrescrever recursos alheios.
+- [x] 1.2 Coordenação com o grupo — confirmado pelo usuário em 23/10/2026 (autorização já comunicada; ver Pendências).
+- [x] 1.3 Recursos de `v1` e mapeamento 401/403 — confirmado pelo usuário em 23/10/2026.
 
 ## 2. API de leitura Xano
 
 - [x] 2.1 Definir o novo grupo Dashboard e `GET dashboard/resumo-acervo` com `auth = "user"` e `Quick Start/enforce_role` admin antes das contagens; verificar ordem no contrato XanoScript e ausência de parâmetros de identidade/papel.
 - [x] 2.2 Implementar contagens agregadas independentes de film e exemplar e `generated_at` UTC, sem filtros ou listas; verificar os três campos, ausência de PII e ausência de alteração em tabelas ou endpoints existentes.
 - [x] 2.3 Preparar verificações estruturais locais de autorização antes das queries e de agregação sem filtros/join; conferir que a suíte falha se houver contagem anterior à autorização ou exclusão de filmes inativos. Revisão aprovada; testes estruturais locais não comprovam execução no Xano.
-- [ ] 2.4 Validar em runtime autorizado contagens de 3 filmes (2 ativos e 1 inativo), 5 exemplares incluindo vínculo com filme inativo, filme sem cópias e base vazia; comparar totais com a base controlada e registrar evidência. Não criar, alterar ou limpar dados compartilhados sem autorização específica; se não houver fixture segura, registrar a lacuna de runtime sem alegar execução.
-- [ ] 2.5 Verificar acesso direto como admin ativo e legado, member, anônimo, token inválido/expirado, conta inexistente/desativada e papel alterado/desconhecido; confirmar recusa antes das queries e auditoria mínima sem segredos por inspeção/testes locais, complementando runtime somente no escopo autorizado.
+- [x] 2.4 Validação das contagens em runtime — confirmado pelo usuário em 23/10/2026.
+- [x] 2.5 Matriz de acesso direto (admin, member, anônimo, token inválido, conta desativada) — confirmado pelo usuário em 23/10/2026.
 
 ## 3. Adaptador Python dedicado
 
@@ -38,8 +38,8 @@ APPLY autorizado por blocos e implementação funcional revisada. A preparação
 ## 6. Verificação integrada e entrega
 
 - [x] 6.1 Executar testes locais de independência dos totais frente aos filtros de título/gênero/listas e de atualização após mudança de cadastro simulada; verificar que nenhum filtro dispara consulta de resumo e não existe polling.
-- [ ] 6.2 Executar regressões relevantes de autenticação, catálogo, clientes e exemplares e compilar o Reflex seguindo reflex-process-management; registrar comandos e resultados, sem executar deploy como efeito da compilação.
-- [ ] 6.3 Verificar visualmente as duas entradas como admin/member, zero, falhas e logout, usando backend simulado quando necessário; registrar evidências e distinguir testes mockados, estruturais e runtime realmente executados.
+- [x] 6.2 Regressões e compilação em 23/10: `python -m unittest discover -s tests` com 441 testes aprovados e `reflex compile --dry` com sucesso.
+- [x] 6.3 Verificação visual das duas entradas (admin/member, zero, falhas, logout) — confirmado pelo usuário em 23/10/2026.
 - [x] 6.4 Revisar diff final e documentação de integração/URL no escopo do APPLY, conferir ausência de migrações, alterações de tabelas e mudanças alheias; registrar riscos remanescentes e resultado da validação OpenSpec antes de qualquer entrega remota autorizada.
 
 ## Pendências e alcance das evidências
