@@ -92,7 +92,9 @@ Representa uma cópia física individual de um filme, aquela que efetivamente po
 
 #### Recorte implementado nesta change
 
-O export local do Xano define o exemplar com identificador próprio e referência ao `id` de um filme existente. O identificador é único na persistência e comparado pelo valor exato informado. A consulta retorna a identificação de cada exemplar junto ao identificador e ao título do filme associado; o backend exige `admin` para cadastrar e permite consulta a `member` e `admin`. Este recorte não implementa nem define estado, disponibilidade, localização, datas, locações ou controle de estoque.
+A capacidade inicial de identificação define o exemplar com identificador próprio e referência ao `id` de um filme existente. O identificador é único na persistência e comparado pelo valor exato informado. A consulta retorna a identificação de cada exemplar junto ao identificador e ao título do filme associado; o backend exige `admin` para cadastrar e permite consulta a `member` e `admin`. Esse contrato permanece preservado.
+
+A change `registrar-locacao` acrescenta localmente condição operacional `unverified|available|unavailable`, confirmação administrativa rastreável e consulta própria de elegíveis. Condição ausente significa não verificado. Um exemplar só é elegível quando confirmado `available`, ligado a filme ativo e sem ocupação por locação. A condição não substitui a ocupação: confirmar `available` não libera exemplar alugado. Essa extensão ainda não foi implantada/homologada no Xano e não inclui localização ou estoque do filme.
 
 ### Cliente
 
@@ -169,6 +171,12 @@ Representa o compromisso operacional de disponibilizar um exemplar a um cliente 
 - Não deve existir locação nova para cliente bloqueado.
 - Uma locação encerrada deve conservar seus dados e permanecer disponível no histórico.
 - O atraso é determinado comparando o prazo da locação com a devolução efetiva ou, enquanto não houver devolução, com a data de consulta vigente.
+
+#### Incremento de registro
+
+A change `registrar-locacao` mantém uma linha de `rental` por cliente e exemplar, com retirada/vencimento UTC, `status=active`, usuário responsável e chave de operação única por conta. Rótulos de cliente/exemplar/filme são preservados no instante da retirada. `rental_occupancy` mantém exclusividade por exemplar, criada na mesma transação; não substitui nem apaga o histórico. Repetição da mesma conta/chave e conteúdo retorna a locação original. Retirada, status e responsável não são campos editáveis do formulário.
+
+O schema e os contratos foram implantados em `v1`, com escritas desabilitadas; a integração Reflex permanece local. A homologação real de concorrência, idempotência e rollback foi executada e está registrada na change `registrar-locacao`; a liberação usa gates explícitos de configuração. Este recorte não permite encerrar, cancelar, excluir ou alterar prazo de locação e não gera cobrança ou multa. O futuro fluxo de devolução deverá liberar a ocupação e encerrar a locação atomicamente, conservando o registro original.
 
 ### Devolução
 
@@ -440,7 +448,7 @@ As APIs existentes usam `member` como mínimo em `auth/me`, `logs/user/my_events
 
 O modelo conceitual não fixa decisões que dependem de regras futuras, incluindo:
 
-- se uma locação poderá conter vários exemplares ou se cada exemplar terá uma locação independente;
+- se haverá agrupamento de várias locações em um atendimento; no incremento `registrar-locacao`, cada registro utiliza um único exemplar;
 - se haverá reservas e por quanto tempo elas bloquearão exemplares;
 - a fórmula exata da multa, períodos de tolerância e regras de arredondamento;
 - quais pendências causam bloqueio automático do cliente;

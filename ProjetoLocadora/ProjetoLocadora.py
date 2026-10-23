@@ -9,6 +9,11 @@ import reflex as rx
 
 from ProjetoLocadora.dashboard_state import DashboardState
 from ProjetoLocadora.dashboard import render_acervo_summary
+from ProjetoLocadora.locacoes_state import LocacoesState
+from ProjetoLocadora.locacoes_ui import (
+    registration as render_rental_registration,
+    detail as render_rental_detail,
+)
 from ProjetoLocadora.catalogo_filmes import (
     CLASSIFICACOES,
     Filme,
@@ -287,6 +292,8 @@ class State(rx.State):
         if self._dashboard_synced_revision != self._session_revision:
             dashboard = await self.get_state(DashboardState)
             dashboard._invalidate()
+            rentals = await self.get_state(LocacoesState)
+            rentals._invalidate()
             self._dashboard_synced_revision = self._session_revision
 
     def _set_user(self, me: dict[str, object]) -> None:
@@ -731,6 +738,18 @@ class State(rx.State):
         if redirect is not None:
             return redirect
         return DashboardState.load_summary()
+
+    async def load_new_rental(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return LocacoesState.load_new()
+
+    async def load_rental_detail(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return LocacoesState.load_detail()
 
     async def submit_login(self, form_data: dict[str, Any]):
         if self.is_loading:
@@ -1253,6 +1272,7 @@ def render_dashboard() -> rx.Component:
             rx.link("Gerenciar catálogo de filmes", href="/filmes"),
             rx.link("Gerenciar clientes", href="/clientes"),
             rx.link("Consultar exemplares", href="/exemplares"),
+            rx.link("Registrar locação", href="/locacoes/nova"),
             spacing="5",
             min_height="85vh",
         ),
@@ -1894,6 +1914,16 @@ def films_page() -> rx.Component:
 @rx.page(route="/exemplares", on_load=State.load_exemplares)
 def exemplares_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_exemplares_page(), rx.fragment())
+
+
+@rx.page(route="/locacoes/nova", on_load=State.load_new_rental)
+def rental_registration_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_rental_registration(State.user_role == "admin"), rx.fragment())
+
+
+@rx.page(route="/locacoes/[rental_id]", on_load=State.load_rental_detail)
+def rental_detail_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_rental_detail(), rx.fragment())
 
 
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)
