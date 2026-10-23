@@ -65,4 +65,4 @@ mostram o plano por padrão. `--execute` exige autorização e registros reais
 indicados pelo operador, pois registra locações que permanecem no histórico.
 Não há devolução neste incremento; exemplares alugados continuam ocupados.
 A implantação e as pendências estão em
-`openspec/changes/registrar-locacao/deployment.md`.
+`openspec/changes/archive/2026-10-23-registrar-locacao/deployment.md`.
