@@ -1,0 +1,114 @@
+/* Multas e pagamentos: reaproveita painéis e linhas de locações; aqui só o específico. */
+
+.vitrine-multas__chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 1px solid var(--vd-edge);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vitrine-multas__chip--open {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.vitrine-multas__chip--partial {
+  color: #fdba74;
+  background: rgba(249, 115, 22, 0.1);
+  border-color: rgba(249, 115, 22, 0.4);
+}
+
+.vitrine-multas__chip--paid {
+  color: #86e0a4;
+  background: rgba(52, 199, 89, 0.12);
+  border-color: rgba(52, 199, 89, 0.4);
+}
+
+.vitrine-multas__chip--waived,
+.vitrine-multas__chip--reversed {
+  color: var(--vd-label);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vitrine-multas__money {
+  font-family: "Space Mono", monospace;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.vitrine-multas__row-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+.vitrine-multas__payment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.vitrine-multas__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.vitrine-multas__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+}
+
+.vitrine-multas__amount {
+  max-width: 160px;
+  font-family: "Space Mono", monospace;
+}
+
+.vitrine-multas__balance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.vitrine-multas__link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vitrine-multas__link:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (max-width: 640px) {
+  .vitrine-multas__form,
+  .vitrine-multas__payment {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .vitrine-multas__field,
+  .vitrine-multas__amount {
+    max-width: none;
+    min-width: 0;
+  }
+
+  .vitrine-multas__row-side {
+    align-items: flex-start;
+    text-align: left;
+  }
+}

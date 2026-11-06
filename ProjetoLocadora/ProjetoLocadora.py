@@ -14,7 +14,7 @@ from ProjetoLocadora.dashboard import (
     customer_list_panel,
     customer_metric_card,
     customer_situation_panel,
-    empty_metric_card,
+    fines_metric_card,
     genre_panel,
     movement_panel,
     overdue_panel,
@@ -25,6 +25,12 @@ from ProjetoLocadora.dashboard import (
     user_initials,
 )
 from ProjetoLocadora.locacoes_state import LocacoesState
+from ProjetoLocadora.multas_state import ClienteHistoricoState, MultasState
+from ProjetoLocadora.multas_ui import (
+    customer_history_panel,
+    fine_detail as render_fine_detail,
+    fines_page as render_fines_page,
+)
 from ProjetoLocadora.locacoes_ui import (
     registration as render_rental_registration,
     detail as render_rental_detail,
@@ -514,6 +520,10 @@ class State(rx.State):
             dashboard._invalidate()
             rentals = await self.get_state(LocacoesState)
             rentals._invalidate()
+            fines = await self.get_state(MultasState)
+            fines._invalidate()
+            history = await self.get_state(ClienteHistoricoState)
+            history._invalidate()
             self._dashboard_synced_revision = self._session_revision
 
     def _set_user(self, me: dict[str, object]) -> None:
@@ -717,6 +727,8 @@ class State(rx.State):
             self.customer_detail_error = err.user_message
         finally:
             self.customer_detail_loading = False
+        if self.customer_detail:
+            return ClienteHistoricoState.open_customer
 
     async def load_customer_for_edit(self):
         redirect = self._require_customer_admin()
@@ -1103,7 +1115,7 @@ class State(rx.State):
         if redirect is not None:
             return redirect
         # Locações e clientes valem para member e admin; o resumo do acervo segue restrito ao admin.
-        return [DashboardState.load_summary(), DashboardState.load_rentals(), DashboardState.load_customers()]
+        return [DashboardState.load_summary(), DashboardState.load_rentals(), DashboardState.load_customers(), DashboardState.load_fines()]
 
     async def load_new_rental(self):
         redirect = await self.require_session()
@@ -1116,6 +1128,18 @@ class State(rx.State):
         if redirect is not None:
             return redirect
         return LocacoesState.load_detail()
+
+    async def load_fines(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return MultasState.open_list()
+
+    async def load_fine_detail(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return MultasState.load_detail()
 
     async def submit_login(self, form_data: dict[str, Any]):
         if self.is_loading:
@@ -1623,8 +1647,9 @@ DASHBOARD_NAV_ITEMS = (
     ("Exemplares", "/exemplares"),
     ("Clientes", "/clientes"),
     ("Locações", "/locacoes/nova"),
+    ("Multas", "/multas"),
 )
-DASHBOARD_NAV_UPCOMING = ("Multas", "Relatórios")
+DASHBOARD_NAV_UPCOMING = ("Relatórios",)
 
 
 def dashboard_nav(active: str = "/backoffice") -> rx.Component:
@@ -1742,7 +1767,7 @@ def render_dashboard() -> rx.Component:
             render_acervo_summary(State.user_role),
             rental_metric_card(),
             customer_metric_card(),
-            empty_metric_card("Multas pendentes", "wallet", "dashboard-multas-pendentes"),
+            fines_metric_card(),
             class_name="vitrine-dash__cards",
         ),
         rx.box(
@@ -2141,41 +2166,6 @@ def customer_data_item(label: str, icon_name: str, value) -> rx.Component:
             rx.el.span(value, class_name="vitrine-clientes__data-value"),
         ),
         class_name="vitrine-clientes__data-item",
-    )
-
-
-def customer_history_panel() -> rx.Component:
-    """Histórico e pendências: aguardam locações, multas e pagamentos (sem dados)."""
-
-    return rx.el.section(
-        rx.box(
-            rx.el.h2("Histórico e pendências", class_name="vitrine-clientes__panel-title"),
-            rx.box(
-                *[
-                    rx.el.span(
-                        label,
-                        rx.el.span("Em breve", class_name="vitrine-dash__soon"),
-                        aria_disabled="true",
-                        class_name="vitrine-clientes__tab",
-                    )
-                    for label in ("Locações", "Multas", "Pagamentos")
-                ],
-                class_name="vitrine-clientes__tabs",
-            ),
-            class_name="vitrine-clientes__panel-head",
-        ),
-        rx.box(
-            rx.icon("clock", size=22, stroke_width=1.6, aria_hidden="true"),
-            rx.el.h3("Histórico em construção", class_name="vitrine-clientes__empty-title"),
-            rx.el.p(
-                "Aguardando implementação das capacidades de locações, multas e pagamentos. "
-                "Nenhum saldo ou histórico financeiro é apresentado nesta versão.",
-                class_name="vitrine-clientes__empty-text",
-            ),
-            class_name="vitrine-clientes__placeholder",
-        ),
-        class_name="vitrine-clientes__panel",
-        aria_label="Histórico e pendências",
     )
 
 
@@ -3316,6 +3306,16 @@ def rental_detail_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_rental_detail(dashboard_topbar("/locacoes/nova")), rx.fragment())
 
 
+@rx.page(route="/multas", on_load=State.load_fines)
+def fines_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_fines_page(dashboard_topbar("/multas")), rx.fragment())
+
+
+@rx.page(route="/multas/[fine_id]", on_load=State.load_fine_detail)
+def fine_detail_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_fine_detail(State.user_role == "admin", dashboard_topbar("/multas")), rx.fragment())
+
+
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)
 def new_film_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_film_form(), rx.fragment())
@@ -3445,5 +3445,6 @@ app = rx.App(
         "/exemplares.css",
         "/clientes.css",
         "/locacoes.css",
+        "/multas.css",
     ]
 )

@@ -14,6 +14,8 @@ from ProjetoLocadora.dashboard_client import (
     get_dashboard_summary_xano,
 )
 from ProjetoLocadora.locacoes_client import RentalError, list_rentals
+from ProjetoLocadora.multas import reais
+from ProjetoLocadora.multas_client import FineError, fines_summary
 from ProjetoLocadora.xano_client import (
     XanoCatalogError,
     XanoCustomerError,
@@ -314,10 +316,15 @@ class DashboardState(rx.State):
     customers_active_pct: int = 0
     customers_list: list[ClienteLinha] = []
     customers_note: str = ""
+    # Multas pendentes: resumo real de GET /multas/resumo (member e admin).
+    fines_status: str = "initial"
+    fines_count: int = 0
+    fines_balance: str = ""
     _revision: int = 0
     _request_id: int = 0
     _rentals_request_id: int = 0
     _customers_request_id: int = 0
+    _fines_request_id: int = 0
 
     def _clear_values(self) -> None:
         self.total_filmes = None
@@ -353,6 +360,7 @@ class DashboardState(rx.State):
         self._request_id += 1
         self._rentals_request_id += 1
         self._customers_request_id += 1
+        self._fines_request_id += 1
         self._clear_values()
         self._clear_rentals()
         self._clear_customers()
@@ -360,6 +368,9 @@ class DashboardState(rx.State):
         self.status = "initial"
         self.rentals_status = "initial"
         self.customers_status = "initial"
+        self.fines_status = "initial"
+        self.fines_count = 0
+        self.fines_balance = ""
 
     def _show_error(self, category: DashboardErrorCategory) -> None:
         # Não usar str(error): somente mensagens públicas controladas aqui.
@@ -618,6 +629,39 @@ class DashboardState(rx.State):
     async def load_rentals(self):
         async for update in self._load_rentals():
             yield update
+
+    @rx.event
+    async def load_fines(self):
+        """Card "Multas pendentes": quantidade e saldo em aberto, sem valor inventado."""
+        if self.fines_status == "loading":
+            return
+        self._fines_request_id += 1
+        request_id, revision = self._fines_request_id, self._revision
+        self.fines_status = "loading"
+        yield
+
+        from ProjetoLocadora.ProjetoLocadora import State
+
+        session = await self.get_state(State)
+        snapshot = (session._user_id, session._user_role, session._xano_auth_token, session._session_revision)
+
+        def current():
+            return (
+                request_id == self._fines_request_id and revision == self._revision
+                and snapshot == (session._user_id, session._user_role, session._xano_auth_token, session._session_revision)
+            )
+
+        try:
+            summary = await fines_summary(snapshot[2])
+        except FineError:
+            if current():
+                self.fines_status = "error"
+                self.fines_count, self.fines_balance = 0, ""
+            return
+        if current():
+            self.fines_count = summary["open_count"]
+            self.fines_balance = reais(summary["open_balance_cents"])
+            self.fines_status = "success"
 
     async def _load_customers(self):
         """Situação cadastral e lista curta de clientes a partir da listagem real."""

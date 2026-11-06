@@ -195,19 +195,16 @@ class TestCustomerDetailUI(unittest.TestCase):
         self.assertIn("registrado em nome de", panel)
         self.assertIn("user_name", panel)
 
-    def test_history_is_a_disabled_placeholder_without_fictional_data(self):
+    def test_history_tabs_use_real_data_without_fictional_values(self):
         panel = _text(customer_history_panel())
-        for tab in ("Locações", "Multas", "Pagamentos"):
+        for tab in ("Locações", "Multas", "Pagamentos", "Saldo em aberto"):
             self.assertIn(tab, panel)
-        self.assertEqual(panel.count("Em breve"), 3)
-        self.assertEqual(panel.count('"aria-disabled":"true"'), 3)
-        self.assertIn(
-            "Aguardando implementação das capacidades de locações, multas e pagamentos. "
-            "Nenhum saldo ou histórico financeiro é apresentado nesta versão.",
-            panel,
-        )
-        for forbidden in ("R$", "Saldo:", "saldo de"):
-            self.assertNotIn(forbidden, panel)
+        self.assertNotIn("Em breve", panel)
+        self.assertNotIn('"aria-disabled":"true"', panel)
+        self.assertNotIn("Aguardando implementação", panel)
+        # Valores vêm do estado (centavos do backend formatados no app), nunca literais.
+        self.assertNotRegex(panel, r"R\$ ?[0-9]")
+        self.assertIn("Novas locações bloqueadas até a quitação", panel)
 
     def test_detail_has_no_delete_action(self):
         for forbidden in ("Excluir", "Apagar", "delete"):

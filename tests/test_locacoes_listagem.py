@@ -291,7 +291,11 @@ class TestListEndpointContract(unittest.TestCase):
     def test_optional_status_filter_is_validated(self):
         self.assertIn("text status? filters=trim", self.source)
         self.assertIn('$status == "" || $status == "active" || $status == "returned"', self.source)
-        self.assertIn('where = $status == "" || $db.rental.status == $status', self.source)
+        self.assertIn('where = ($status == "" || $db.rental.status == $status) && ($customer_id == 0 || $db.rental.customer_id == $customer_id)', self.source)
+
+    def test_optional_customer_filter_is_validated(self):
+        self.assertIn("int customer_id?", self.source)
+        self.assertIn("$customer_id >= 0", self.source)
 
     def test_projection_is_the_13_field_detail_contract_without_personal_data(self):
         expected = [f'"items.{field}"' for field in re.findall(r'"(\w+)"', RETURN_FIELDS_13)]

@@ -8,6 +8,7 @@ import httpx
 
 from ProjetoLocadora.config import get_xano_rental_api_url, rental_writes_enabled
 from ProjetoLocadora.locacoes import Rental, validar_rental
+from ProjetoLocadora.multas import Fine, validar_fine
 from ProjetoLocadora.xano_client import retry_after_seconds
 
 
@@ -23,6 +24,7 @@ MESSAGES = {
     "notfound": "Locação não encontrada.",
     "unknown": "Resultado ainda desconhecido. Consulte a tentativa antes de iniciar outra locação.",
     "ratelimited": "O Xano atingiu o limite de requisições do plano. Aguarde alguns segundos e tente novamente.",
+    "fineblock": "O cliente tem multa em aberto. Quite ou abone a multa antes de uma nova locação.",
 }
 
 
@@ -89,6 +91,8 @@ async def _request(token: str, method: str, path: str, *, payload=None, params=N
     } and status >= 400):
         raise RentalError("conflict")
     if status in (400, 422):
+        if type(data) is dict and data.get("message") == "Cliente com multa em aberto.":
+            raise RentalError("fineblock")
         raise RentalError("input")
     if status not in (200, 201):
         raise RentalError("unknown" if writing else "unavailable")
@@ -137,18 +141,28 @@ async def create_rental(token: str, payload: dict) -> tuple[Rental, bool]:
         raise RentalError("unknown") from None
 
 
-async def return_rental(token: str, rental_id: int, operation_key: str) -> tuple[Rental, bool]:
-    """Registra a devolução; sem retry automático. Repetir usa a mesma chave."""
+async def return_rental(token: str, rental_id: int, operation_key: str) -> tuple[Rental, bool, Fine | None]:
+    """Registra a devolução; sem retry automático. Repetir usa a mesma chave.
+
+    Aceita a resposta anterior (sem `fine`) e a com multa (`fine` nulo ou a multa gerada).
+    """
     _id(rental_id)
     key = _key(operation_key)
     result = await _request(token, "POST", f"locacoes/{rental_id}/devolucao", payload={"operation_key": key})
     try:
-        if type(result) is not dict or set(result) != {"rental", "audit_succeeded"} or type(result["audit_succeeded"]) is not bool:
+        if type(result) is not dict or set(result) not in ({"rental", "audit_succeeded"}, {"rental", "fine", "audit_succeeded"}):
+            raise ValueError
+        if type(result["audit_succeeded"]) is not bool:
             raise ValueError
         rental = validar_rental(result["rental"])
         if rental["id"] != rental_id or rental["status"] != "returned":
             raise ValueError
-        return rental, result["audit_succeeded"]
+        fine = None
+        if result.get("fine") is not None:
+            fine = validar_fine(result["fine"])
+            if fine["rental_id"] != rental_id or fine["customer_id"] != rental["customer_id"] or fine["returned_at"] != rental["returned_at"]:
+                raise ValueError
+        return rental, result["audit_succeeded"], fine
     except (ValueError, TypeError, KeyError):
         raise RentalError("unknown") from None
 
@@ -172,16 +186,19 @@ async def reconcile_rental(token: str, key: str) -> Rental:
         raise RentalError("invalid") from None
 
 
-async def list_rentals(token: str, page: int = 1, per_page: int = 10, status: str = "") -> dict:
+async def list_rentals(token: str, page: int = 1, per_page: int = 10, status: str = "", customer_id: int = 0) -> dict:
     """Página de locações registradas; cada item segue o mesmo contrato do detalhe.
 
     `status` ("active" ou "returned") filtra no Xano; vazio lista todas.
+    `customer_id` (opcional) restringe às locações de um cliente.
     """
-    if status not in ("", "active", "returned"):
+    if status not in ("", "active", "returned") or type(customer_id) is not int or customer_id < 0:
         raise RentalError("input")
     params = {"page": _id(page), "per_page": _id(per_page)}
     if status:
         params["status"] = status
+    if customer_id:
+        params["customer_id"] = customer_id
     data = await _request(token, "GET", "locacoes", params=params)
     try:
         if type(data) is not dict or set(data) != {"items", "page", "per_page", "total"}:
@@ -197,6 +214,8 @@ async def list_rentals(token: str, page: int = 1, per_page: int = 10, status: st
             raise ValueError
         # Filtro ignorado pelo serviço não pode misturar as abas.
         if status and any(item["status"] != status for item in items):
+            raise ValueError
+        if customer_id and any(item["customer_id"] != customer_id for item in items):
             raise ValueError
         return {"items": items, "page": page, "per_page": per_page, "total": data["total"]}
     except (ValueError, TypeError, KeyError):

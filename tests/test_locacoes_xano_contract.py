@@ -109,7 +109,9 @@ def check_return(source):
     assert predicate_exists(transaction, '$rental != null')
     assert predicate_exists(transaction, '$rental.status == "active"')
     assert predicate_exists(transaction, '$occupancy != null && $occupancy.exemplar_id == $rental.exemplar_id')
-    assert [args for args, _ in calls(transaction, "db.add")] == [("rental_return",)]
+    # Multa por atraso na mesma unidade atômica (registrar-multa-e-pagamento).
+    assert [args for args, _ in calls(transaction, "db.add")] == [("rental_return",), ("fine",)]
+    assert ('"Locacoes/calculate_late_fine"',) in [args for args, _ in calls(transaction, "function.run")]
     edits = list(calls(transaction, "db.edit"))
     assert [args for args, _ in edits] == [("rental",)]
     data = list(flatten(block(unique_assignment(edits[0][1], "data"))))

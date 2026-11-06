@@ -135,7 +135,7 @@ class TestDashboardSession(unittest.IsolatedAsyncioTestCase):
                     # Resumo (restrito ao admin no próprio evento), locações e clientes (member e admin).
                     self.assertEqual(
                         [e.handler for e in events],
-                        [DashboardState.load_summary, DashboardState.load_rentals, DashboardState.load_customers],
+                        [DashboardState.load_summary, DashboardState.load_rentals, DashboardState.load_customers, DashboardState.load_fines],
                     )
                     await consume(self.dashboard.load_summary())
                     if role == "admin":

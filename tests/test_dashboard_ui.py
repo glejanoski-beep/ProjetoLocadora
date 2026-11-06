@@ -36,6 +36,7 @@ class TestDashboardUI(unittest.TestCase):
             refresh_summary=DashboardState.refresh_summary,
             load_rentals=DashboardState.load_rentals,
             load_customers=DashboardState.load_customers,
+            load_fines=DashboardState.load_fines,
         )
 
         def literal_condition(condition, yes, no=None):
@@ -81,7 +82,7 @@ class TestDashboardUI(unittest.TestCase):
         self.assertEqual(str(buttons[0].disabled), "false")
         self.assertEqual(
             [event.handler for event in buttons[0].event_triggers["on_click"].events],
-            [DashboardState.refresh_summary, DashboardState.load_rentals, DashboardState.load_customers],
+            [DashboardState.refresh_summary, DashboardState.load_rentals, DashboardState.load_customers, DashboardState.load_fines],
         )
 
     def test_member_has_no_toolbar_or_refresh(self):
@@ -153,7 +154,7 @@ class TestDashboardUI(unittest.TestCase):
     def test_navigation_links_only_to_existing_pages_and_marks_upcoming(self):
         self.assertEqual(
             [href for _, href in DASHBOARD_NAV_ITEMS],
-            ["/backoffice", "/filmes", "/exemplares", "/clientes", "/locacoes/nova"],
+            ["/backoffice", "/filmes", "/exemplares", "/clientes", "/locacoes/nova", "/multas"],
         )
         rendered = self.rendered(dashboard_topbar())
         for label in DASHBOARD_NAV_UPCOMING:
@@ -161,8 +162,8 @@ class TestDashboardUI(unittest.TestCase):
         self.assertEqual(rendered.count("Em breve"), len(DASHBOARD_NAV_UPCOMING))
         self.assertEqual(rendered.count('"aria-disabled":"true"'), len(DASHBOARD_NAV_UPCOMING))
         self.assertEqual(rendered.count('"aria-current":"page"'), 1)
-        for forbidden in ("/multas", "/relatorios"):
-            self.assertNotIn(forbidden, rendered)
+        self.assertEqual(DASHBOARD_NAV_UPCOMING, ("Relatórios",))
+        self.assertNotIn("/relatorios", rendered)
 
     def test_user_block_uses_session_data_and_translated_roles(self):
         rendered = self.rendered(dashboard_topbar())
