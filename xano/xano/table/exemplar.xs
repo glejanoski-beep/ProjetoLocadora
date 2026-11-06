@@ -14,6 +14,12 @@ table exemplar {
     timestamp? condition_confirmed_at
     int? condition_confirmed_by { table = "user" }
     text? condition_reason filters=trim|max:500
+    // Baixa (change editar-e-baixar-exemplares): preenchida = fora do acervo.
+    // Nunca apaga o exemplar nem as locações; reativação limpa estes campos.
+    timestamp? retired_at
+    int? retired_by { table = "user" }
+    enum? retire_kind { values = ["lost", "damaged", "discarded", "other"] }
+    text? retire_reason filters=trim|max:500
   }
 
   index = [

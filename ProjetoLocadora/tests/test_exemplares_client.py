@@ -17,6 +17,8 @@ EXEMPLAR = {
     "filme_id": 42,
     "filme_titulo": "Filme de teste",
 }
+# Resposta anterior (sem campos de baixa) normalizada como exemplar ativo.
+NORMALIZED = {**EXEMPLAR, "baixado": False, "baixa_tipo": "", "baixa_motivo": ""}
 
 
 class TestExemplarClient(unittest.IsolatedAsyncioTestCase):
@@ -32,7 +34,7 @@ class TestExemplarClient(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await list_exemplares_xano("token"), [])
             self.assertEqual(
                 await list_exemplares_xano("token"),
-                [EXEMPLAR],
+                [NORMALIZED],
             )
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args.args, ("GET", "", "token"))
@@ -58,7 +60,7 @@ class TestExemplarClient(unittest.IsolatedAsyncioTestCase):
                 "token",
                 {"identificador": "A-01", "filme_id": 42},
             )
-        self.assertEqual(result, EXEMPLAR)
+        self.assertEqual(result, NORMALIZED)
         request.assert_awaited_once_with(
             "POST",
             "",

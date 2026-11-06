@@ -526,3 +526,79 @@
   height: 100%;
   object-fit: cover;
 }
+
+/* Ações administrativas por cópia (editar-e-baixar-exemplares) */
+.vitrine-exemplares__chip-button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -10px -16px;
+  padding: 10px 16px;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.vitrine-exemplares__chip-button:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.vitrine-exemplares__chip-button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}
+
+.vitrine-exemplares__chip--retired {
+  border-left-color: var(--vd-edge);
+  opacity: 0.6;
+}
+
+.vitrine-exemplares__chip--retired .vitrine-exemplares__chip-code {
+  text-decoration: line-through;
+}
+
+.vitrine-exemplares__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vd-label);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vitrine-exemplares__checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #dc2638;
+}
+
+.vitrine-exemplares__section-title {
+  margin: 8px 0 0;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vitrine-exemplares__textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.vitrine-exemplares__retired-note {
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--vd-edge);
+  border-radius: 12px;
+}
+
+.vitrine-exemplares__danger {
+  background: #dc2638 !important;
+}
+
+.vitrine-exemplares__danger-outline {
+  color: #fca5a5;
+  border-color: rgba(220, 38, 56, 0.5);
+}

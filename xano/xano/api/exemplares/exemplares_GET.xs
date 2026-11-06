@@ -13,7 +13,7 @@ query "exemplares" verb=GET {
 
     db.query exemplar {
       sort = {exemplar.id: "asc"}
-      output = ["id", "identificador", "filme_id"]
+      output = ["id", "identificador", "filme_id", "retired_at", "retire_kind", "retire_reason"]
       return = {type: "list"}
     } as $exemplares
 
@@ -35,7 +35,7 @@ query "exemplares" verb=GET {
         }
 
         var $item {
-          value = {}|set:"id":$exemplar.id|set:"identificador":$exemplar.identificador|set:"filme_id":$exemplar.filme_id|set:"filme_titulo":$film_title
+          value = {}|set:"id":$exemplar.id|set:"identificador":$exemplar.identificador|set:"filme_id":$exemplar.filme_id|set:"filme_titulo":$film_title|set:"baixado":($exemplar.retired_at != null)|set:"baixa_tipo":($exemplar.retire_kind ?? "")|set:"baixa_motivo":($exemplar.retire_reason ?? "")
         }
         var.update $items { value = $items|push:$item }
       }
