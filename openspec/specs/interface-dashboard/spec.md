@@ -24,17 +24,22 @@ A barra SHALL exibir a marca "CINEBYTE LOCADORA" com o logotipo do login, a nave
 - "Exemplares" (`/exemplares`);
 - "Clientes" (`/clientes`);
 - "Locações" (`/locacoes/nova`);
-- "Multas" (`/multas`).
+- "Multas" (`/multas`);
+- "Relatórios" (`/relatorios`).
 
-A página atual SHALL ser indicada por `aria-current`. "Relatórios" SHALL aparecer desabilitado (`aria-disabled`), com a indicação "Em breve", sem link ou destino.
+A página atual SHALL ser indicada por `aria-current`. Nenhum item SHALL aparecer como "Em breve".
 
 #### Scenario: Item sem página implementada
-- **WHEN** a pessoa tenta ativar "Relatórios"
-- **THEN** nenhuma navegação ocorre e a indicação "Em breve" permanece visível
+- **WHEN** a navegação é exibida
+- **THEN** todos os itens são links para páginas existentes, e nenhum aparece desabilitado ou com "Em breve"
 
 #### Scenario: Acesso às multas
 - **WHEN** a pessoa ativa "Multas"
 - **THEN** a navegação abre `/multas`, e o item fica indicado como página atual
+
+#### Scenario: Acesso aos relatórios
+- **WHEN** a pessoa ativa "Relatórios"
+- **THEN** a navegação abre `/relatorios`, e o item fica indicado como página atual
 
 ### Requirement: Indicadores usam apenas dados reais ou estados vazios explícitos
 

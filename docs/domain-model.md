@@ -374,6 +374,7 @@ Representa a classificação usada atualmente para determinar quais operações 
 | Registrar multas conforme a política de cálculo (geradas na devolução) | Permitido | Permitido |
 | Consultar multas e pagamentos | Permitido | Permitido |
 | Abonar saldo de multa ou estornar pagamento | Não permitido | Permitido, com motivo e rastreabilidade |
+| Consultar relatórios consolidados (locações, financeiro, filmes mais alugados) | Não permitido | Permitido |
 | Gerir papéis e estado de acesso | Não permitido | Permitido |
 | Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
 
@@ -422,6 +423,8 @@ Um exemplar pode estar disponível, alugado, reservado, indisponível, em manute
 ### Relatórios
 
 São visões consolidadas dos dados operacionais. Relatórios de locações podem combinar locações, devoluções, multas e pagamentos; o relatório de filmes mais alugados deve contar as locações por filme sem confundir quantidade de filmes com quantidade de exemplares.
+
+A change `gerar-relatorios` implementa a consulta por período (datas de Brasília, até 366 dias), restrita a `admin` e sem dados pessoais. Pagamentos recebidos contam somente os que continuam confirmados; estornos contam na data do estorno; devolução com atraso considera o vencimento, não a tolerância da multa. O ranking soma as retiradas de todas as cópias de cada filme e mostra ao lado a quantidade de exemplares.
 
 ## 5. Regras e invariantes principais
 

@@ -156,3 +156,7 @@ Os recursos de backend foram implantados no Xano `v1`, com variável de escrita 
 A change `registrar-multa-e-pagamento` define a política de multa por atraso: R$ 3,00 por dia, após 2 horas de tolerância, com teto de 30 diárias (R$ 90,00), configurável no Xano. A multa é gerada na mesma transação da devolução atrasada e guarda a regra usada. Pagamentos totais ou parciais são registrados por `member` ou `admin`, sem integração com meios de pagamento e nunca acima do saldo. Estorno e abono são exclusivos de `admin`, com motivo, e nada é apagado. Cliente com multa em aberto não inicia nova locação.
 
 No frontend, a página `/multas` (lista e detalhe com pagamento), o card "Multas pendentes", as abas de histórico do cliente e a multa estimada na devolução passam a usar dados reais. "Relatórios" continua fora deste incremento. Pagamentos, estornos e abonos usam a mesma trava de escrita das locações (`XANO_RENTAL_WRITES_ENABLED`).
+
+## 15. Incremento de relatórios
+
+A change `gerar-relatorios` acrescenta a página `/relatorios`, restrita a `admin`, com filtro de período no horário de Brasília (atalhos de 7 e 30 dias, mês atual e anterior, ou datas manuais até 366 dias). Ela apresenta retiradas, devoluções e atrasos, o financeiro do período (multas geradas, pagamentos por meio, estornos e abonos), a situação atual (locações ativas, vencidas e saldo em aberto) e os 10 filmes mais alugados com a quantidade de exemplares. Os totais são agregados no backend por um endpoint de leitura. Com isso, nenhum item da navegação permanece como "Em breve".

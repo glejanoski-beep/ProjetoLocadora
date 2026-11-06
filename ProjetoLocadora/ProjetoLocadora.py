@@ -26,6 +26,8 @@ from ProjetoLocadora.dashboard import (
 )
 from ProjetoLocadora.locacoes_state import LocacoesState
 from ProjetoLocadora.multas_state import ClienteHistoricoState, MultasState
+from ProjetoLocadora.relatorios_state import RelatoriosState
+from ProjetoLocadora.relatorios_ui import reports_page as render_reports_page
 from ProjetoLocadora.multas_ui import (
     customer_history_panel,
     fine_detail as render_fine_detail,
@@ -524,6 +526,8 @@ class State(rx.State):
             fines._invalidate()
             history = await self.get_state(ClienteHistoricoState)
             history._invalidate()
+            reports = await self.get_state(RelatoriosState)
+            reports._invalidate()
             self._dashboard_synced_revision = self._session_revision
 
     def _set_user(self, me: dict[str, object]) -> None:
@@ -1141,6 +1145,12 @@ class State(rx.State):
             return redirect
         return MultasState.load_detail()
 
+    async def load_reports(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return RelatoriosState.open_page()
+
     async def submit_login(self, form_data: dict[str, Any]):
         if self.is_loading:
             return
@@ -1648,8 +1658,9 @@ DASHBOARD_NAV_ITEMS = (
     ("Clientes", "/clientes"),
     ("Locações", "/locacoes/nova"),
     ("Multas", "/multas"),
+    ("Relatórios", "/relatorios"),
 )
-DASHBOARD_NAV_UPCOMING = ("Relatórios",)
+DASHBOARD_NAV_UPCOMING: tuple[str, ...] = ()
 
 
 def dashboard_nav(active: str = "/backoffice") -> rx.Component:
@@ -3316,6 +3327,11 @@ def fine_detail_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_fine_detail(State.user_role == "admin", dashboard_topbar("/multas")), rx.fragment())
 
 
+@rx.page(route="/relatorios", on_load=State.load_reports)
+def reports_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_reports_page(dashboard_topbar("/relatorios")), rx.fragment())
+
+
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)
 def new_film_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_film_form(), rx.fragment())
@@ -3446,5 +3462,6 @@ app = rx.App(
         "/clientes.css",
         "/locacoes.css",
         "/multas.css",
+        "/relatorios.css",
     ]
 )
