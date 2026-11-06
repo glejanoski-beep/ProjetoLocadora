@@ -1,0 +1,42 @@
+/* Página de usuários (gerenciar-usuarios). */
+
+.vitrine-usuarios__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.vitrine-usuarios__search {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.vitrine-usuarios__row-button {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  cursor: pointer;
+}
+
+.vitrine-usuarios__row-button:focus-visible {
+  outline: 2px solid var(--vd-red);
+  outline-offset: 2px;
+}
+
+.vitrine-usuarios__self {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vd-label);
+  background: rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+
+.vitrine-usuarios__row--self {
+  cursor: default;
+}

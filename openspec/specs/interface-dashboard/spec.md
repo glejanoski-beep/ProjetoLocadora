@@ -25,7 +25,8 @@ A barra SHALL exibir a marca "CINEBYTE LOCADORA" com o logotipo do login, a nave
 - "Clientes" (`/clientes`);
 - "Locações" (`/locacoes/nova`);
 - "Multas" (`/multas`);
-- "Relatórios" (`/relatorios`).
+- "Relatórios" (`/relatorios`);
+- "Usuários" (`/usuarios`).
 
 A página atual SHALL ser indicada por `aria-current`. Nenhum item SHALL aparecer como "Em breve".
 
@@ -40,6 +41,10 @@ A página atual SHALL ser indicada por `aria-current`. Nenhum item SHALL aparece
 #### Scenario: Acesso aos relatórios
 - **WHEN** a pessoa ativa "Relatórios"
 - **THEN** a navegação abre `/relatorios`, e o item fica indicado como página atual
+
+#### Scenario: Acesso aos usuários
+- **WHEN** a pessoa ativa "Usuários"
+- **THEN** a navegação abre `/usuarios`, e o item fica indicado como página atual
 
 ### Requirement: Indicadores usam apenas dados reais ou estados vazios explícitos
 

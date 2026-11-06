@@ -310,6 +310,8 @@ Representa a identidade autenticada de uma pessoa que utiliza o sistema em nome 
 - A permissão deve ser verificada no momento da operação, não apenas na interface.
 - A autenticação e o controle de papéis já estão representados na base Xano/XanoScript do projeto.
 
+A change `gerenciar-usuarios` acrescenta a gestão das contas pelo `admin`, sem exclusão: definir o papel (`admin` ou `member`) e a situação (ativa ou desativada) de outra conta, com motivo obrigatório e evento `update_user` no log. Uma conta não altera a própria; como o ator precisa continuar `admin` ativo dentro da transação, a locadora nunca fica sem administrador ativo. Desativar corta o login e, pela verificação de `enforce_role`, toda operação protegida, mesmo com token ainda válido. Nome, e-mail e senha não são alterados por essa operação, e novas contas continuam entrando pelo cadastro público como `member`.
+
 ### Funcionário
 
 Representa a pessoa que trabalha na locadora. O conceito pode ser associado a um usuário interno, mas essa associação não é obrigatória para autenticação ou autorização no modelo atual.
@@ -377,7 +379,7 @@ Representa a classificação usada atualmente para determinar quais operações 
 | Consultar multas e pagamentos | Permitido | Permitido |
 | Abonar saldo de multa ou estornar pagamento | Não permitido | Permitido, com motivo e rastreabilidade |
 | Consultar relatórios consolidados (locações, financeiro, filmes mais alugados) | Não permitido | Permitido |
-| Gerir papéis e estado de acesso | Não permitido | Permitido |
+| Gerir papéis e estado de acesso de outras contas (página `/usuarios`) | Não permitido | Permitido, com motivo; nunca a própria conta |
 | Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
 
 Reservas, relatórios e operações ainda não especificadas não recebem permissão por analogia; suas Changes devem definir os papéis autorizados. Esta matriz define a política, mas não significa que os respectivos módulos ou endpoints já estejam implementados.
