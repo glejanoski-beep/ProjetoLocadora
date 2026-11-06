@@ -14,7 +14,7 @@ import httpx
 
 from ProjetoLocadora.catalogo_filmes import Filme, capa_link_valido
 from ProjetoLocadora.clientes import ClienteDetalhe, ClienteResumo, PaginaClientes
-from ProjetoLocadora.exemplares import Exemplar, ExemplarCadastro
+from ProjetoLocadora.exemplares import Exemplar, ExemplarCadastro, normalizar_exemplar
 from ProjetoLocadora.config import (
     get_xano_auth_api_url,
     get_xano_catalog_api_url,
@@ -1284,7 +1284,12 @@ def _write_exemplar_response(response: httpx.Response) -> Exemplar:
         raise XanoExemplarError(
             "O Xano retornou uma resposta inválida para a gravação do exemplar."
         )
-    return result["exemplar"]
+    try:
+        return normalizar_exemplar(result["exemplar"])
+    except ValueError as err:
+        raise XanoExemplarError(
+            "O Xano retornou uma resposta inválida para a gravação do exemplar."
+        ) from err
 
 
 async def list_exemplares_xano(auth_token: str) -> list[Exemplar]:
@@ -1309,7 +1314,12 @@ async def list_exemplares_xano(auth_token: str) -> list[Exemplar]:
         raise XanoExemplarError(
             "O Xano retornou uma lista de exemplares inválida."
         )
-    return exemplares
+    try:
+        return [normalizar_exemplar(exemplar) for exemplar in exemplares]
+    except ValueError as err:
+        raise XanoExemplarError(
+            "O Xano retornou uma lista de exemplares inválida."
+        ) from err
 
 
 async def create_exemplar_xano(
@@ -1334,3 +1344,74 @@ async def create_exemplar_xano(
         operation="POST exemplares",
     )
     return _write_exemplar_response(response)
+
+
+# Recusas de negócio de edição, baixa e reativação, exibidas como vieram do backend.
+EXEMPLAR_BUSINESS_MESSAGES = frozenset({
+    "Já existe um exemplar com este identificador.",
+    "Exemplar com locações registradas não pode trocar de filme.",
+    "Exemplar alugado: registre a devolução antes da baixa.",
+    "Exemplar baixado: reative antes de editar.",
+    "Exemplar já está baixado.",
+    "Exemplar não está baixado.",
+    "Exemplar não encontrado.",
+    "Filme não encontrado.",
+})
+
+
+def _raise_exemplar_business_error(response: httpx.Response) -> None:
+    if response.status_code not in (400, 404, 409, 422):
+        return
+    try:
+        body = response.json()
+    except (UnicodeDecodeError, ValueError):
+        return
+    message = body.get("message") if isinstance(body, dict) else None
+    if message in EXEMPLAR_BUSINESS_MESSAGES:
+        raise XanoExemplarError(message, status=response.status_code)
+
+
+async def _exemplar_admin_write(
+    method: str, path: str, auth_token: str, body: dict[str, Any], operation: str,
+) -> Exemplar:
+    """Escrita administrativa sem retry automático; resposta validada como no cadastro."""
+    try:
+        response = await _exemplar_request(method, path, auth_token, json_body=body)
+    except httpx.HTTPError as err:
+        logger.warning("Falha de rede em %s: %s", operation, type(err).__name__)
+        raise XanoExemplarError(
+            "Não foi possível confirmar a operação no Xano. Atualize a lista antes de repetir."
+        ) from err
+    _raise_exemplar_business_error(response)
+    _raise_exemplar_http_error(response, operation=operation)
+    return _write_exemplar_response(response)
+
+
+async def update_exemplar_xano(
+    auth_token: str, exemplar_id: int, data: ExemplarCadastro
+) -> Exemplar:
+    return await _exemplar_admin_write(
+        "PATCH", f"/{exemplar_id}", auth_token,
+        {"identificador": data["identificador"], "filme_id": data["filme_id"]},
+        "PATCH exemplares/{id}",
+    )
+
+
+async def retire_exemplar_xano(
+    auth_token: str, exemplar_id: int, retire_kind: str, reason: str
+) -> Exemplar:
+    return await _exemplar_admin_write(
+        "POST", f"/{exemplar_id}/baixa", auth_token,
+        {"retire_kind": retire_kind, "reason": reason},
+        "POST exemplares/{id}/baixa",
+    )
+
+
+async def reactivate_exemplar_xano(
+    auth_token: str, exemplar_id: int, reason: str
+) -> Exemplar:
+    return await _exemplar_admin_write(
+        "POST", f"/{exemplar_id}/reativacao", auth_token,
+        {"reason": reason},
+        "POST exemplares/{id}/reativacao",
+    )

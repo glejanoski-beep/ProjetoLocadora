@@ -55,7 +55,14 @@ from ProjetoLocadora.clientes import (
     validar_bloqueio_manual,
     validar_cliente,
 )
-from ProjetoLocadora.exemplares import Exemplar, validar_exemplar
+from ProjetoLocadora.exemplares import (
+    RETIRE_KIND_BY_LABEL,
+    RETIRE_KINDS,
+    Exemplar,
+    validar_baixa,
+    validar_exemplar,
+    validar_motivo,
+)
 from ProjetoLocadora.xano_client import (
     GENERIC_AUTH_ERROR,
     XanoCatalogError,
@@ -65,6 +72,9 @@ from ProjetoLocadora.xano_client import (
     create_film_xano,
     create_customer_xano,
     create_exemplar_xano,
+    reactivate_exemplar_xano,
+    retire_exemplar_xano,
+    update_exemplar_xano,
     get_customer_xano,
     get_film_xano,
     XanoSessionUnavailable,
@@ -93,6 +103,11 @@ EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 EXEMPLAR_FILTER_ALL = "Todos os filmes"
+
+
+def _active_count(items: list) -> int:
+    """Cópias não baixadas; baixados exibidos não entram na contagem do filme."""
+    return sum(1 for item in items if not item.get("baixado"))
 
 
 class ExemplarGrupo(TypedDict):
@@ -211,6 +226,17 @@ class State(rx.State):
     exemplar_search: str = ""
     exemplar_film_filter: str = EXEMPLAR_FILTER_ALL
     exemplar_dialog_open: bool = False
+    # Ações administrativas por cópia (editar-e-baixar-exemplares).
+    exemplar_show_retired: bool = False
+    exemplar_admin_open: bool = False
+    exemplar_admin_id: int = 0
+    exemplar_edit_identifier: str = ""
+    exemplar_edit_film_selection: str = ""
+    exemplar_retire_kind: str = ""
+    exemplar_admin_reason: str = ""
+    exemplar_retire_confirming: bool = False
+    exemplar_admin_error: str = ""
+    exemplar_admin_loading: bool = False
 
     @rx.var
     def visible_films(self) -> list[FilmeCatalogo]:
@@ -268,6 +294,9 @@ class State(rx.State):
         search = self.exemplar_search.strip().lower()
         by_film: dict[int, list[Exemplar]] = {}
         for exemplar in self.exemplares:
+            # Baixados só aparecem com "Mostrar baixados"; nunca entram na contagem.
+            if exemplar.get("baixado") and not self.exemplar_show_retired:
+                continue
             by_film.setdefault(exemplar["filme_id"], []).append(exemplar)
 
         groups: list[ExemplarGrupo] = []
@@ -291,8 +320,8 @@ class State(rx.State):
                     "detalhe": (
                         f"{film['genero']} · {film['ano_lancamento']}" if film else ""
                     ),
-                    "count": len(items),
-                    "unidade": "exemplar" if len(items) == 1 else "exemplares",
+                    "count": _active_count(items),
+                    "unidade": "exemplar" if _active_count(items) == 1 else "exemplares",
                     "exemplares": items,
                     "opcao": option,
                     "tom": film_id % 5,
@@ -304,11 +333,12 @@ class State(rx.State):
 
     @rx.var
     def exemplar_summary(self) -> str:
-        total = len(self.exemplares)
+        active = [item for item in self.exemplares if not item.get("baixado")]
+        total = len(active)
         text = f"{total} {'exemplar' if total == 1 else 'exemplares'}"
         if self.exemplar_films:
             film_ids = {film["id"] for film in self.exemplar_films}
-            with_copy = len({item["filme_id"] for item in self.exemplares} & film_ids)
+            with_copy = len({item["filme_id"] for item in active} & film_ids)
             films_total = len(film_ids)
             text += (
                 f" · {with_copy} de {films_total} "
@@ -469,6 +499,147 @@ class State(rx.State):
 
     def capture_exemplar_film_filter(self, value: str) -> None:
         self.exemplar_film_filter = value
+
+    @rx.var
+    def exemplar_retired_count(self) -> int:
+        return sum(1 for item in self.exemplares if item.get("baixado"))
+
+    @rx.var
+    def exemplar_admin_item(self) -> dict[str, str]:
+        item = next((e for e in self.exemplares if e["id"] == self.exemplar_admin_id), None)
+        if item is None:
+            return {}
+        return {
+            "id": str(item["id"]),
+            "identificador": item["identificador"],
+            "filme": item["filme_titulo"],
+            "baixado": "1" if item.get("baixado") else "",
+            "baixa_tipo": RETIRE_KINDS.get(item.get("baixa_tipo", ""), ""),
+            "baixa_motivo": item.get("baixa_motivo", ""),
+        }
+
+    @rx.var
+    def exemplar_retire_kind_options(self) -> list[str]:
+        return list(RETIRE_KINDS.values())
+
+    def toggle_exemplar_show_retired(self, value: bool) -> None:
+        self.exemplar_show_retired = bool(value)
+
+    def open_exemplar_admin(self, exemplar_id: int) -> None:
+        """Abre as ações da cópia; somente admin (o backend continua autorizando)."""
+        if self._user_role != "admin":
+            return
+        item = next((e for e in self.exemplares if e["id"] == exemplar_id), None)
+        if item is None:
+            return
+        self.exemplar_admin_id = item["id"]
+        self.exemplar_edit_identifier = item["identificador"]
+        self.exemplar_edit_film_selection = f"{item['filme_id']} | {item['filme_titulo']}"
+        self.exemplar_retire_kind = ""
+        self.exemplar_admin_reason = ""
+        self.exemplar_retire_confirming = False
+        self.exemplar_admin_error = ""
+        self.exemplar_admin_open = True
+
+    def set_exemplar_admin_open(self, is_open: bool) -> None:
+        if is_open or self.exemplar_admin_loading:
+            return
+        self.exemplar_admin_open = False
+        self.exemplar_admin_id = 0
+        self.exemplar_admin_error = ""
+        self.exemplar_retire_confirming = False
+
+    def capture_exemplar_edit_identifier(self, value: str) -> None:
+        self.exemplar_edit_identifier = value[:100]
+
+    def capture_exemplar_edit_film(self, value: str) -> None:
+        self.exemplar_edit_film_selection = value
+
+    def capture_exemplar_retire_kind(self, value: str) -> None:
+        self.exemplar_retire_kind = value
+
+    def capture_exemplar_admin_reason(self, value: str) -> None:
+        self.exemplar_admin_reason = value[:500]
+
+    def ask_exemplar_retire(self) -> None:
+        self.exemplar_admin_error = ""
+        try:
+            validar_baixa(tipo=RETIRE_KIND_BY_LABEL.get(self.exemplar_retire_kind, ""), motivo=self.exemplar_admin_reason)
+        except ValueError as error:
+            self.exemplar_admin_error = str(error)
+            return
+        self.exemplar_retire_confirming = True
+
+    def cancel_exemplar_retire(self) -> None:
+        if not self.exemplar_admin_loading:
+            self.exemplar_retire_confirming = False
+
+    def _replace_exemplar(self, updated: Exemplar) -> None:
+        self.exemplares = [updated if item["id"] == updated["id"] else item for item in self.exemplares]
+
+    async def _exemplar_admin_operation(self, operation, success: str):
+        redirect = self._require_exemplar_admin()
+        await self._sync_dashboard_session()
+        if redirect:
+            return redirect
+        if self.exemplar_admin_loading or not self.exemplar_admin_id:
+            return None
+        self.exemplar_admin_error = ""
+        self.exemplar_admin_loading = True
+        try:
+            updated = await operation()
+        except XanoExemplarError as err:
+            self.exemplar_admin_error = err.user_message
+            self.exemplar_retire_confirming = False
+        else:
+            self._replace_exemplar(updated)
+            self.exemplares_success = success
+            self.exemplar_admin_open = False
+            self.exemplar_admin_id = 0
+            self.exemplar_retire_confirming = False
+        finally:
+            self.exemplar_admin_loading = False
+        return None
+
+    async def submit_exemplar_edit(self):
+        try:
+            selected_film_id = int(self.exemplar_edit_film_selection.split(" | ", 1)[0])
+        except (ValueError, IndexError):
+            selected_film_id = None
+        errors, payload = validar_exemplar(identificador=self.exemplar_edit_identifier, filme_id=selected_film_id)
+        if errors:
+            self.exemplar_admin_error = next(iter(errors.values()))
+            return None
+        exemplar_id = self.exemplar_admin_id
+        return await self._exemplar_admin_operation(
+            lambda: update_exemplar_xano(self._xano_auth_token, exemplar_id, payload),
+            "Exemplar atualizado.",
+        )
+
+    async def submit_exemplar_retire(self):
+        try:
+            kind, reason = validar_baixa(tipo=RETIRE_KIND_BY_LABEL.get(self.exemplar_retire_kind, ""), motivo=self.exemplar_admin_reason)
+        except ValueError as error:
+            self.exemplar_admin_error = str(error)
+            self.exemplar_retire_confirming = False
+            return None
+        exemplar_id = self.exemplar_admin_id
+        return await self._exemplar_admin_operation(
+            lambda: retire_exemplar_xano(self._xano_auth_token, exemplar_id, kind, reason),
+            "Baixa registrada.",
+        )
+
+    async def submit_exemplar_reactivate(self):
+        try:
+            reason = validar_motivo(self.exemplar_admin_reason, "reativação")
+        except ValueError as error:
+            self.exemplar_admin_error = str(error)
+            return None
+        exemplar_id = self.exemplar_admin_id
+        return await self._exemplar_admin_operation(
+            lambda: reactivate_exemplar_xano(self._xano_auth_token, exemplar_id, reason),
+            "Exemplar reativado. Confira a condição antes de alugá-lo.",
+        )
 
     def set_exemplar_dialog_open(self, is_open: bool) -> None:
         if is_open and self._user_role != "admin":
@@ -2662,13 +2833,37 @@ def render_films_page() -> rx.Component:
     )
 
 
-def render_exemplar_card(exemplar: Exemplar) -> rx.Component:
-    """Identificador do exemplar exibido como dado, sem ações de edição."""
+def _retire_kind_label(kind) -> rx.Component:
+    return rx.match(kind, ("lost", "Perdido"), ("damaged", "Danificado"), ("discarded", "Descartado"), "Outro")
 
-    return rx.el.li(
-        rx.el.span("EXEMPLAR", class_name="vitrine-exemplares__chip-label"),
+
+def render_exemplar_card(exemplar: Exemplar) -> rx.Component:
+    """Identificador como dado; para admin, abre as ações da cópia (editar, baixa, reativar)."""
+
+    content = (
+        rx.el.span(
+            rx.cond(exemplar["baixado"], rx.fragment("BAIXADO · ", _retire_kind_label(exemplar["baixa_tipo"])), "EXEMPLAR"),
+            class_name="vitrine-exemplares__chip-label",
+        ),
         rx.el.span(exemplar["identificador"], class_name="vitrine-exemplares__chip-code"),
-        class_name="vitrine-exemplares__chip",
+    )
+    return rx.el.li(
+        rx.cond(
+            State.user_role == "admin",
+            rx.el.button(
+                *content,
+                type="button",
+                on_click=State.open_exemplar_admin(exemplar["id"]),
+                aria_label="Ações do exemplar " + exemplar["identificador"],
+                class_name="vitrine-exemplares__chip-button",
+            ),
+            rx.fragment(*content),
+        ),
+        class_name=rx.cond(
+            exemplar["baixado"],
+            "vitrine-exemplares__chip vitrine-exemplares__chip--retired",
+            "vitrine-exemplares__chip",
+        ),
     )
 
 
@@ -2768,12 +2963,184 @@ def exemplares_filters() -> rx.Component:
             aria_label="Filtrar por filme",
             class_name="vitrine-exemplares__input vitrine-exemplares__select",
         ),
+        rx.el.label(
+            rx.el.input(
+                type="checkbox",
+                checked=State.exemplar_show_retired,
+                on_change=State.toggle_exemplar_show_retired,
+                class_name="vitrine-exemplares__checkbox",
+            ),
+            "Mostrar baixados",
+            class_name="vitrine-exemplares__toggle",
+        ),
         rx.el.span(
             State.exemplar_summary,
+            rx.cond(
+                State.exemplar_retired_count > 0,
+                rx.fragment(
+                    " · ",
+                    State.exemplar_retired_count,
+                    rx.cond(State.exemplar_retired_count == 1, " baixado", " baixados"),
+                ),
+            ),
             class_name="vitrine-exemplares__summary",
             aria_live="polite",
         ),
         class_name="vitrine-exemplares__filters",
+    )
+
+
+def exemplar_admin_dialog() -> rx.Component:
+    """Ações administrativas da cópia: edição, baixa (com confirmação) e reativação."""
+
+    item = State.exemplar_admin_item
+    reason_box = rx.box(
+        rx.el.label("Motivo", html_for="exemplar-admin-reason", class_name="vitrine-exemplares__label"),
+        rx.el.textarea(
+            id="exemplar-admin-reason",
+            value=State.exemplar_admin_reason,
+            on_change=State.capture_exemplar_admin_reason,
+            max_length=500,
+            placeholder="Obrigatório. Até 500 caracteres.",
+            class_name="vitrine-exemplares__input vitrine-exemplares__textarea",
+        ),
+        class_name="vitrine-exemplares__field",
+    )
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.box(
+                rx.box(
+                    rx.dialog.title("Exemplar " + item["identificador"], class_name="vitrine-exemplares__dialog-title"),
+                    rx.dialog.description(item["filme"], class_name="vitrine-exemplares__dialog-sub"),
+                ),
+                rx.dialog.close(
+                    rx.el.button(
+                        rx.icon("x", size=18, stroke_width=1.8, aria_hidden="true"),
+                        type="button",
+                        aria_label="Fechar",
+                        class_name="vitrine-exemplares__close",
+                    )
+                ),
+                class_name="vitrine-exemplares__dialog-head",
+            ),
+            rx.cond(
+                State.exemplar_admin_error != "",
+                rx.box(State.exemplar_admin_error, role="alert", class_name="vitrine-exemplares__alert"),
+            ),
+            rx.cond(
+                item["baixado"] != "",
+                rx.fragment(
+                    rx.box(
+                        rx.el.strong("Baixado · ", item["baixa_tipo"]),
+                        rx.el.p(item["baixa_motivo"], class_name="vitrine-exemplares__hint"),
+                        class_name="vitrine-exemplares__retired-note",
+                    ),
+                    reason_box,
+                    rx.el.p(
+                        "A cópia volta como não conferida e só pode ser alugada depois de uma nova conferência.",
+                        class_name="vitrine-exemplares__hint",
+                    ),
+                    rx.box(
+                        rx.dialog.close(rx.el.button("Cancelar", type="button", class_name="vitrine-exemplares__cancel")),
+                        rx.button(
+                            "Reativar",
+                            on_click=State.submit_exemplar_reactivate,
+                            loading=State.exemplar_admin_loading,
+                            class_name="vitrine-exemplares__primary",
+                        ),
+                        class_name="vitrine-exemplares__dialog-actions",
+                    ),
+                ),
+                rx.cond(
+                    State.exemplar_retire_confirming,
+                    rx.fragment(
+                        rx.el.p(
+                            "Confirmar a baixa? A cópia sai das opções de locação. O histórico de locações é preservado.",
+                            class_name="vitrine-exemplares__dialog-sub",
+                        ),
+                        rx.box(
+                            rx.el.button(
+                                "Voltar",
+                                type="button",
+                                on_click=State.cancel_exemplar_retire,
+                                class_name="vitrine-exemplares__cancel",
+                            ),
+                            rx.button(
+                                "Confirmar baixa",
+                                on_click=State.submit_exemplar_retire,
+                                loading=State.exemplar_admin_loading,
+                                class_name="vitrine-exemplares__primary vitrine-exemplares__danger",
+                            ),
+                            class_name="vitrine-exemplares__dialog-actions",
+                        ),
+                    ),
+                    rx.fragment(
+                        rx.el.h3("Editar", class_name="vitrine-exemplares__section-title"),
+                        rx.box(
+                            rx.el.label("Identificador", html_for="exemplar-edit-identifier", class_name="vitrine-exemplares__label"),
+                            rx.el.input(
+                                id="exemplar-edit-identifier",
+                                value=State.exemplar_edit_identifier,
+                                on_change=State.capture_exemplar_edit_identifier,
+                                class_name="vitrine-exemplares__input vitrine-exemplares__mono",
+                            ),
+                            class_name="vitrine-exemplares__field",
+                        ),
+                        rx.box(
+                            rx.el.label("Filme", html_for="exemplar-edit-film", class_name="vitrine-exemplares__label"),
+                            rx.el.select(
+                                rx.foreach(State.exemplar_film_options, lambda option: rx.el.option(option, value=option)),
+                                id="exemplar-edit-film",
+                                value=State.exemplar_edit_film_selection,
+                                on_change=State.capture_exemplar_edit_film,
+                                class_name="vitrine-exemplares__input vitrine-exemplares__select",
+                            ),
+                            rx.el.span(
+                                "Só é possível trocar o filme de uma cópia que nunca foi alugada.",
+                                class_name="vitrine-exemplares__hint",
+                            ),
+                            class_name="vitrine-exemplares__field",
+                        ),
+                        rx.box(
+                            rx.button(
+                                "Salvar alterações",
+                                on_click=State.submit_exemplar_edit,
+                                loading=State.exemplar_admin_loading,
+                                class_name="vitrine-exemplares__primary",
+                            ),
+                            class_name="vitrine-exemplares__dialog-actions",
+                        ),
+                        rx.el.h3("Dar baixa", class_name="vitrine-exemplares__section-title"),
+                        rx.box(
+                            rx.el.label("Tipo", html_for="exemplar-retire-kind", class_name="vitrine-exemplares__label"),
+                            rx.el.select(
+                                rx.el.option("Selecione o tipo", value="", disabled=True),
+                                rx.foreach(State.exemplar_retire_kind_options, lambda option: rx.el.option(option, value=option)),
+                                id="exemplar-retire-kind",
+                                value=State.exemplar_retire_kind,
+                                on_change=State.capture_exemplar_retire_kind,
+                                class_name="vitrine-exemplares__input vitrine-exemplares__select",
+                            ),
+                            class_name="vitrine-exemplares__field",
+                        ),
+                        reason_box,
+                        rx.box(
+                            rx.el.button(
+                                "Dar baixa",
+                                type="button",
+                                on_click=State.ask_exemplar_retire,
+                                disabled=State.exemplar_admin_loading,
+                                class_name="vitrine-exemplares__cancel vitrine-exemplares__danger-outline",
+                            ),
+                            class_name="vitrine-exemplares__dialog-actions",
+                        ),
+                    ),
+                ),
+            ),
+            class_name="vitrine-exemplares-dialog",
+        ),
+        open=State.exemplar_admin_open,
+        on_open_change=State.set_exemplar_admin_open,
     )
 
 
@@ -2969,6 +3336,7 @@ def render_exemplares_page() -> rx.Component:
             ),
         ),
         rx.cond(State.user_role == "admin", exemplar_dialog()),
+        rx.cond(State.user_role == "admin", exemplar_admin_dialog()),
         class_name="vitrine-dash vitrine-exemplares",
     )
 

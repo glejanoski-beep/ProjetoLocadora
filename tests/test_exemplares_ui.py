@@ -78,12 +78,14 @@ class TestExemplaresPageStructure(unittest.TestCase):
         for var in ("exemplares_error", "exemplares_success", "exemplar_films_error"):
             self.assertIn(var, self.page)
 
-    def test_group_rows_show_real_fields_without_edit_actions(self):
+    def test_group_rows_show_real_fields_without_delete_or_rental_actions(self):
         for field in ("filme_id", "titulo", "detalhe", "identificador", "unidade"):
             with self.subTest(field=field):
                 self.assertIn(field, self.page)
         self.assertIn("ID do filme: ", self.page)
-        for forbidden in ("Editar", "pencil", "Excluir", "Devolver", "Emprestar", "Locar"):
+        # Edição e baixa existem só no diálogo do admin; exclusão e locação nunca.
+        self.assertIn("open_exemplar_admin", self.page)
+        for forbidden in ("pencil", "Excluir", "Devolver", "Emprestar", "Locar"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.page)
 

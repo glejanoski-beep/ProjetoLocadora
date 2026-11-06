@@ -33,11 +33,16 @@ query "locacoes/exemplares/{id}/condicao" verb=PATCH {
         field_name = "id"
         field_value = $input.id
         lock = true
-        output = ["id"]
+        output = ["id", "retired_at"]
       } as $exemplar
       precondition ($exemplar != null) {
         error_type = "notfound"
         error = "Exemplar não encontrado."
+      }
+      // Baixado não volta a available pela conferência: exige reativação.
+      precondition ($exemplar.retired_at == null) {
+        error_type = "inputerror"
+        error = "Exemplar baixado: reative antes de conferir."
       }
       db.edit exemplar {
         field_name = "id"

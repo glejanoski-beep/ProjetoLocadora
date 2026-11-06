@@ -96,6 +96,8 @@ A capacidade inicial de identificação define o exemplar com identificador pró
 
 A change `registrar-locacao` acrescenta localmente condição operacional `unverified|available|unavailable`, confirmação administrativa rastreável e consulta própria de elegíveis. Condição ausente significa não verificado. Um exemplar só é elegível quando confirmado `available`, ligado a filme ativo e sem ocupação por locação. A condição não substitui a ocupação: confirmar `available` não libera exemplar alugado. Essa extensão ainda não foi implantada/homologada no Xano e não inclui localização ou estoque do filme.
 
+A change `editar-e-baixar-exemplares` acrescenta manutenção administrativa da cópia, sem exclusão física. O identificador pode ser corrigido a qualquer momento (as locações guardam o identificador do seu momento); a troca de filme só é aceita para cópia sem nenhuma locação registrada. A **baixa** (perdido, danificado, descartado ou outro, com motivo) é recusada enquanto houver locação ativa, preserva o exemplar e o histórico e marca a condição como `unavailable`, retirando a cópia das opções de locação. A conferência de condição recusa exemplar baixado. A **reativação** limpa a baixa e devolve a condição a `unverified`, exigindo nova conferência. Baixa e reativação ficam no log de eventos (`retire_exemplar`, `reactivate_exemplar`).
+
 ### Cliente
 
 Representa a pessoa que pode realizar locações na locadora.
