@@ -154,7 +154,7 @@ class TestDashboardUI(unittest.TestCase):
     def test_navigation_links_only_to_existing_pages_and_marks_upcoming(self):
         self.assertEqual(
             [href for _, href in DASHBOARD_NAV_ITEMS],
-            ["/backoffice", "/filmes", "/exemplares", "/clientes", "/locacoes/nova", "/multas", "/relatorios"],
+            ["/backoffice", "/filmes", "/exemplares", "/clientes", "/locacoes/nova", "/multas", "/relatorios", "/usuarios"],
         )
         rendered = self.rendered(dashboard_topbar())
         for label in DASHBOARD_NAV_UPCOMING:
@@ -164,6 +164,7 @@ class TestDashboardUI(unittest.TestCase):
         self.assertEqual(rendered.count('"aria-current":"page"'), 1)
         self.assertEqual(DASHBOARD_NAV_UPCOMING, ())
         self.assertIn("/relatorios", rendered)
+        self.assertIn("/usuarios", rendered)
 
     def test_user_block_uses_session_data_and_translated_roles(self):
         rendered = self.rendered(dashboard_topbar())

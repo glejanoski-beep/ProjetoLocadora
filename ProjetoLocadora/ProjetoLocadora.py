@@ -28,6 +28,8 @@ from ProjetoLocadora.locacoes_state import LocacoesState
 from ProjetoLocadora.multas_state import ClienteHistoricoState, MultasState
 from ProjetoLocadora.relatorios_state import RelatoriosState
 from ProjetoLocadora.relatorios_ui import reports_page as render_reports_page
+from ProjetoLocadora.usuarios_state import UsuariosState
+from ProjetoLocadora.usuarios_ui import users_page as render_users_page
 from ProjetoLocadora.multas_ui import (
     customer_history_panel,
     fine_detail as render_fine_detail,
@@ -699,6 +701,8 @@ class State(rx.State):
             history._invalidate()
             reports = await self.get_state(RelatoriosState)
             reports._invalidate()
+            users = await self.get_state(UsuariosState)
+            users._invalidate()
             self._dashboard_synced_revision = self._session_revision
 
     def _set_user(self, me: dict[str, object]) -> None:
@@ -1322,6 +1326,12 @@ class State(rx.State):
             return redirect
         return RelatoriosState.open_page()
 
+    async def load_users(self):
+        redirect = await self.require_session()
+        if redirect is not None:
+            return redirect
+        return UsuariosState.open_page()
+
     async def submit_login(self, form_data: dict[str, Any]):
         if self.is_loading:
             return
@@ -1830,6 +1840,7 @@ DASHBOARD_NAV_ITEMS = (
     ("Locações", "/locacoes/nova"),
     ("Multas", "/multas"),
     ("Relatórios", "/relatorios"),
+    ("Usuários", "/usuarios"),
 )
 DASHBOARD_NAV_UPCOMING: tuple[str, ...] = ()
 
@@ -3700,6 +3711,11 @@ def reports_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_reports_page(dashboard_topbar("/relatorios")), rx.fragment())
 
 
+@rx.page(route="/usuarios", on_load=State.load_users)
+def users_page() -> rx.Component:
+    return rx.cond(State.is_authenticated, render_users_page(dashboard_topbar("/usuarios")), rx.fragment())
+
+
 @rx.page(route="/filmes/novo", on_load=State.load_new_film)
 def new_film_page() -> rx.Component:
     return rx.cond(State.is_authenticated, render_film_form(), rx.fragment())
@@ -3831,5 +3847,6 @@ app = rx.App(
         "/locacoes.css",
         "/multas.css",
         "/relatorios.css",
+        "/usuarios.css",
     ]
 )

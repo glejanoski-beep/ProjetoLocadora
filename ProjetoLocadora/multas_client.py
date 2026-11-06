@@ -55,11 +55,12 @@ def _reject_constant(value):
     raise ValueError
 
 
-async def _request(token: str, method: str, path: str, *, payload=None, params=None):
+async def _request(token: str, method: str, path: str, *, payload=None, params=None, gated: bool = True, business=BUSINESS_CONFLICTS):
+    """`gated`: escrita depende de XANO_RENTAL_WRITES_ENABLED; `business`: recusas exibidas como vieram."""
     if not token:
         raise FineError("authentication")
     writing = method != "GET"
-    if writing and not rental_writes_enabled():
+    if writing and gated and not rental_writes_enabled():
         raise FineError("disabled")
     try:
         base = get_xano_rental_api_url()
@@ -91,7 +92,7 @@ async def _request(token: str, method: str, path: str, *, payload=None, params=N
         if not writing or message in NOT_FOUND:
             raise FineError("notfound", detail=message if message in NOT_FOUND else "")
         raise FineError("unknown")
-    if status >= 400 and message in BUSINESS_CONFLICTS:
+    if status >= 400 and message in business:
         raise FineError("conflict", detail=message)
     if status in (400, 422):
         raise FineError("input")
