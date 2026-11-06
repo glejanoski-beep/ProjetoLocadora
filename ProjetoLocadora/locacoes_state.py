@@ -15,6 +15,8 @@ from ProjetoLocadora.locacoes_client import (
     MESSAGES, RentalError, available_exemplars, confirm_condition,
     create_rental, get_rental, list_rentals, reconcile_rental, return_rental,
 )
+from ProjetoLocadora.multas import FINE_STATUS, dias, estimar_multa, reais, saldo
+from ProjetoLocadora.multas_client import FineError, fine_policy, list_fines
 from ProjetoLocadora.xano_client import (
     XanoCustomerError, XanoExemplarError, XanoSessionUnavailable, get_me_xano, is_authorized_employee,
     list_customers_xano, list_exemplares_xano,
@@ -84,6 +86,11 @@ class LocacoesState(rx.State):
     _return_pending: dict = {}
     return_confirming: bool = False
     _rental: dict = {}
+    # Multa da locação devolvida e política vigente (estimativa); leituras complementares.
+    _fine: dict = {}
+    _policy: dict = {}
+    # Cliente selecionado com multa em aberto (consulta ao selecionar; o backend decide).
+    _customer_fine_open: bool = False
     # Locações registradas: idle | loading | ready | empty | error. Carga própria,
     # sem `_busy`, para não bloquear o formulário de registro.
     list_state: str = "idle"
@@ -135,6 +142,8 @@ class LocacoesState(rx.State):
             return "O cliente selecionado está inativo."
         if customer["bloqueio_manual_ativo"]:
             return "O cliente selecionado está bloqueado."
+        if self._customer_fine_open:
+            return "O cliente selecionado tem multa em aberto."
         return ""
 
     def _exemplar_issue(self) -> str:
@@ -306,9 +315,28 @@ class LocacoesState(rx.State):
             "registered_by": str(rental["registered_by"]),
             "returned_at": data_brasilia(rental["returned_at"]) if rental.get("returned_at") else "",
             "returned_by": str(rental["returned_by"]) if rental.get("returned_by") else "",
-            # Atraso derivado: devolução posterior ao vencimento. Sem multa nem valor.
+            # Atraso derivado: devolução posterior ao vencimento (a tolerância decide a multa).
             "returned_late": "1" if rental.get("returned_at") and rental["returned_at"] > rental["due_at"] else "",
+            **self._fine_fields(rental),
         }
+
+    def _fine_fields(self, rental: Rental) -> dict[str, str]:
+        """Multa gerada (locação devolvida) ou estimativa (locação ativa vencida)."""
+        fine = self._fine
+        if fine and fine["rental_id"] == rental["id"]:
+            return {
+                "fine": f"{reais(fine['amount_cents'])} ({dias(fine['late_days'])})",
+                "fine_status": FINE_STATUS[fine["status"]],
+                "fine_balance": reais(saldo(fine)),
+                "fine_href": f"/multas/{fine['id']}",
+                "fine_estimate": "",
+            }
+        estimate = ""
+        if rental["status"] == "active" and self._policy:
+            days, cents = estimar_multa(rental["due_at"], int(time.time() * 1000), self._policy)
+            if days:
+                estimate = f"{reais(cents)} ({dias(days)})"
+        return {"fine": "", "fine_status": "", "fine_balance": "", "fine_href": "", "fine_estimate": estimate}
 
     @rx.var
     def rental_rows(self) -> list[dict[str, str]]:
@@ -367,6 +395,9 @@ class LocacoesState(rx.State):
         self._customer_sel = self._exemplar_sel = {}
         self._pending = {}
         self._rental = {}
+        self._fine = {}
+        self._policy = {}
+        self._customer_fine_open = False
         self._customer_page = self._exemplar_page = 1
         self._customer_total = self._exemplar_total = 0
         self.customer_search = self.customer_choice = self.exemplar_choice = ""
@@ -478,6 +509,27 @@ class LocacoesState(rx.State):
             self._customer_sel = row or {}
             self._customer_sel_page = self._customer_page
             self.customer_choice = _customer_label(row) if row else ""
+            self._customer_fine_open = False
+            if row and row["status"] == "active" and not row["bloqueio_manual_ativo"]:
+                return LocacoesState.check_customer_fines
+
+    @rx.event
+    async def check_customer_fines(self):
+        """Indica multa em aberto do cliente escolhido; falha na consulta não bloqueia."""
+        customer = self._customer_sel
+        if not customer or self._cooling_down():
+            return
+        context = None
+        try:
+            context = await self._authorize()
+            if context is None:
+                return
+            page = await list_fines(context[1][2], 1, 1, status="open", customer_id=customer["id"])
+            if self._current(*context) and self._customer_sel.get("id") == customer["id"]:
+                self._customer_fine_open = page["total"] > 0
+        except (RentalError, FineError):
+            # Indicação auxiliar: o backend recusa a locação se houver multa em aberto.
+            return
 
     @rx.event
     def capture_exemplar(self, value: str):
@@ -815,6 +867,8 @@ class LocacoesState(rx.State):
                         self._exemplars = []
                         self._exemplar_sel = {}
                         self.exemplar_choice = ""
+                    elif error.category == "fineblock":
+                        self._customer_fine_open = True
                 await self._show_error(error)
         finally:
             if revision == self._revision:
@@ -900,6 +954,7 @@ class LocacoesState(rx.State):
         raw = self._route_rental_id()
         self.detail_id = raw[:20]
         self._rental = {}
+        self._fine = {}
         self.message = self.notice = self.lookup_error = ""
         # Identificador inválido não chega ao Xano nem consome a cota do plano.
         if not RENTAL_NUMBER.fullmatch(raw):
@@ -930,6 +985,7 @@ class LocacoesState(rx.State):
                     # Resultado desconhecido resolvido pelo registro persistido.
                     self._return_pending = {}
                     self.notice = "Devolução confirmada pelo registro persistido."
+                await self._load_fine_context(context, rental)
         except RentalError as error:
             if revision == self._revision and (context is None or self._current(*context)):
                 if error.category == "notfound":
@@ -941,6 +997,23 @@ class LocacoesState(rx.State):
         finally:
             if revision == self._revision:
                 self._busy = self.loading = False
+
+    async def _load_fine_context(self, context, rental: Rental) -> None:
+        """Multa da locação devolvida com atraso, ou política para estimar a de uma vencida.
+
+        Leitura complementar: falha não invalida o detalhe já carregado.
+        """
+        try:
+            if rental["status"] == "returned" and rental["returned_at"] > rental["due_at"]:
+                page = await list_fines(context[1][2], 1, 1, rental_id=rental["id"])
+                if self._current(*context) and page["items"]:
+                    self._fine = page["items"][0]
+            elif rental["status"] == "active" and rental["due_at"] < time.time() * 1000 and not self._policy:
+                policy = await fine_policy(context[1][2])
+                if self._current(*context):
+                    self._policy = policy
+        except FineError:
+            return
 
     @rx.var
     def is_active_rental(self) -> bool:
@@ -993,12 +1066,13 @@ class LocacoesState(rx.State):
             if not repeat:
                 self._return_pending = {"rental_id": rental["id"], "operation_key": str(uuid4())}
             pending = dict(self._return_pending)
-            returned, audit = await return_rental(snapshot[2], pending["rental_id"], pending["operation_key"])
+            returned, audit, fine = await return_rental(snapshot[2], pending["rental_id"], pending["operation_key"])
             if not self._current(*context):
                 return
             if returned["returned_by"] != int(snapshot[0]):
                 raise RentalError("unknown")
             self._rental = returned
+            self._fine = fine or {}
             self._return_pending = {}
             self.return_confirming = False
             self.detail_state = "ready"
@@ -1006,7 +1080,11 @@ class LocacoesState(rx.State):
             # Volta à lista já na aba "Devolvidas", com a locação recém-devolvida no topo.
             self.list_tab = "returned"
             self._list_page = 1
-            self.list_notice = f"Locação #{returned['id']} devolvida." + (
+            fine_note = (
+                f" Multa por atraso gerada: {reais(fine['amount_cents'])} ({dias(fine['late_days'])}), multa nº {fine['id']}."
+                if fine else ""
+            )
+            self.list_notice = f"Locação #{returned['id']} devolvida." + fine_note + (
                 "" if audit else " A auditoria não foi confirmada; não repita a devolução."
             )
             yield rx.redirect("/locacoes/nova")

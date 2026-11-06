@@ -49,7 +49,7 @@ query "locacoes/{id}/devolucao" verb=POST {
                 field_name = "id"
                 field_value = $input.id
                 lock = true
-                output = ["id", "exemplar_id", "status"]
+                output = ["id", "exemplar_id", "status", "due_at", "customer_id", "customer_name", "film_title", "exemplar_identifier"]
               } as $rental
               precondition ($rental != null) {
                 error_type = "notfound"
@@ -89,6 +89,35 @@ query "locacoes/{id}/devolucao" verb=POST {
               db.del rental_occupancy {
                 field_name = "id"
                 field_value = $occupancy.id
+              }
+              // Multa por atraso na mesma unidade: falha no cálculo desfaz a devolução.
+              function.run "Locacoes/calculate_late_fine" {
+                input = {due_at: $rental.due_at, returned_at: $returned_at}
+              } as $fine_policy
+              conditional {
+                if ($fine_policy.late_days > 0) {
+                  db.add fine {
+                    data = {
+                      rental_id: $rental.id
+                      customer_id: $rental.customer_id
+                      customer_name: $rental.customer_name
+                      film_title: $rental.film_title
+                      exemplar_identifier: $rental.exemplar_identifier
+                      due_at: $rental.due_at
+                      returned_at: $returned_at
+                      late_days: $fine_policy.late_days
+                      daily_cents: $fine_policy.daily_cents
+                      grace_minutes: $fine_policy.grace_minutes
+                      cap_cents: $fine_policy.cap_cents
+                      amount_cents: $fine_policy.amount_cents
+                      paid_cents: 0
+                      waived_cents: 0
+                      status: "open"
+                      created_at: $returned_at
+                      created_by: $auth.id
+                    }
+                  } as $fine_inserted
+                }
               }
               var.update $returned { value = $inserted }
               var.update $created { value = true }
@@ -209,8 +238,31 @@ query "locacoes/{id}/devolucao" verb=POST {
       field_value = $returned.rental_id
       output = ["id", "customer_id", "exemplar_id", "registered_by", "rented_at", "due_at", "status", "customer_name", "exemplar_identifier", "film_id", "film_title", "returned_at", "returned_by"]
     } as $result
+    // A multa (ou null) é sempre lida pela locação: repetições devolvem a mesma.
+    db.get fine {
+      field_name = "rental_id"
+      field_value = $returned.rental_id
+      output = ["id", "rental_id", "customer_id", "customer_name", "film_title", "exemplar_identifier", "due_at", "returned_at", "late_days", "daily_cents", "grace_minutes", "cap_cents", "amount_cents", "paid_cents", "waived_cents", "status", "created_at", "created_by", "waived_at", "waived_by", "waive_reason"]
+    } as $fine
+    // Auditoria da multa após o commit; falha não desfaz a devolução nem a multa.
+    var $fine_audit_succeeded { value = false }
+    conditional {
+      if ($created && $fine != null) {
+        try_catch {
+          try {
+            function.run "Quick Start/log_event" {
+              input = {user_id: $auth.id, action: "create_fine", result: "success", resource_type: "fine", resource_id: $fine.id}
+            } as $fine_event_log
+            var.update $fine_audit_succeeded { value = true }
+          }
+          catch {
+            var.update $fine_audit_succeeded { value = false }
+          }
+        }
+      }
+    }
   }
-  response = {rental: $result, audit_succeeded: $audit_succeeded}
+  response = {rental: $result, fine: $fine, audit_succeeded: $audit_succeeded}
   tags = []
   guid = "y4kNz1qCYPoAKxMqdUNuCTMUFuM"
 }

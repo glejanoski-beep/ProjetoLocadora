@@ -599,7 +599,15 @@ def _return_section() -> rx.Component:
                         ),
                         rx.cond(
                             view["overdue"] != "",
-                            rx.el.p("O vencimento já passou: a devolução ficará registrada com atraso. Nenhuma multa é calculada nesta versão.", class_name="vitrine-locacoes__late-note"),
+                            rx.el.p(
+                                "O vencimento já passou: a devolução ficará registrada com atraso.",
+                                rx.cond(
+                                    view["fine_estimate"] != "",
+                                    rx.el.span(" Multa estimada: ", rx.el.strong(view["fine_estimate"]), ". O valor definitivo é calculado pelo sistema ao confirmar."),
+                                    rx.el.span(" Dentro da tolerância não há multa; o sistema calcula ao confirmar."),
+                                ),
+                                class_name="vitrine-locacoes__late-note",
+                            ),
                         ),
                         rx.box(
                             rx.el.button(
@@ -634,6 +642,23 @@ def _return_section() -> rx.Component:
             _detail_item("Devolvida em", "calendar-check", view["returned_at"]),
             _detail_item("Recebida pelo funcionário nº", "badge-check", view["returned_by"]),
             _detail_item("Prazo", "clock", rx.cond(view["returned_late"] != "", "Devolvida com atraso", "Devolvida no prazo")),
+            rx.cond(
+                view["fine"] != "",
+                rx.fragment(
+                    _detail_item("Multa por atraso", "wallet", view["fine"]),
+                    _detail_item("Situação da multa", "receipt", view["fine_status"] + " · saldo " + view["fine_balance"]),
+                    rx.el.a(
+                        rx.icon("wallet", size=16, stroke_width=1.8, aria_hidden="true"),
+                        "Ver multa e pagamentos",
+                        href=view["fine_href"],
+                        class_name="vitrine-clientes__secondary",
+                    ),
+                ),
+                rx.cond(
+                    view["returned_late"] != "",
+                    rx.el.p("Atraso dentro da tolerância ou anterior à cobrança de multas: nenhuma multa registrada.", class_name="vitrine-clientes__panel-sub"),
+                ),
+            ),
             rx.el.p("Locação encerrada; nenhuma ação disponível.", class_name="vitrine-clientes__panel-sub"),
             class_name="vitrine-locacoes__return",
             aria_label="Devolução registrada",

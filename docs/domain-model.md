@@ -237,7 +237,14 @@ Representa um valor devido em razão de atraso ou de outra ocorrência prevista 
 
 - O valor deve ser calculado segundo uma regra de negócio registrada e reproduzível.
 - Uma multa quitada não deve ser alterada silenciosamente.
-- O cálculo exato, a tolerância e os critérios de cancelamento ainda devem ser definidos em especificação própria.
+
+#### Política de multa por atraso (change `registrar-multa-e-pagamento`)
+
+- Diária de R$ 3,00, tolerância de 2 horas após o vencimento e teto de 30 diárias (R$ 90,00), configuráveis no Xano (`XANO_FINE_DAILY_CENTS`, `XANO_FINE_GRACE_MINUTES`, `XANO_FINE_CAP_CENTS`; ausentes usam esses padrões).
+- Atraso até a tolerância não gera multa; acima dela, dias = blocos de 24 h desde o vencimento, arredondados para cima; valor = mín(dias × diária, teto). Valores em centavos inteiros.
+- A multa é criada na mesma transação da devolução, uma por locação, com o retrato da política aplicada; mudanças posteriores na política não a alteram. Devoluções anteriores à capacidade não geram multa retroativa.
+- Situações: `open` (com saldo; "parcial" quando há pagamento), `paid` (saldo zero por pagamentos) e `waived` (saldo restante abonado por `admin`, com motivo). Saldo = valor − pago − abonado, sempre ≥ 0.
+- Cliente com multa `open` não inicia nova locação (bloqueio financeiro, independente do bloqueio manual).
 
 ### Pagamento
 
@@ -268,7 +275,8 @@ Representa a quitação total ou parcial de uma obrigação financeira relaciona
 
 - Um pagamento registrado deve manter seu histórico e não ser removido para corrigir uma operação; ajustes devem ser rastreáveis.
 - A soma dos pagamentos não deve quitar uma multa além do valor permitido pela regra vigente.
-- Os meios de pagamento e o tratamento de estornos ainda não estão definidos no escopo inicial.
+- Meios registrados (sem integração): dinheiro, Pix, cartão de débito e cartão de crédito. O pagamento nunca excede o saldo da multa.
+- Estorno somente por `admin`, com motivo: o pagamento passa a `reversed` (nunca é apagado) e a multa volta a `open`. Pagamento de multa abonada não é estornado.
 
 ### Usuário interno
 
@@ -363,7 +371,9 @@ Representa a classificação usada atualmente para determinar quais operações 
 | Incluir locações | Permitido, sujeito às regras de negócio | Permitido, sujeito às regras de negócio |
 | Registrar devoluções | Permitido, sujeito às regras de negócio | Permitido, sujeito às regras de negócio |
 | Registrar pagamentos conforme o saldo e a obrigação | Permitido | Permitido |
-| Registrar multas conforme a política de cálculo | Permitido | Permitido |
+| Registrar multas conforme a política de cálculo (geradas na devolução) | Permitido | Permitido |
+| Consultar multas e pagamentos | Permitido | Permitido |
+| Abonar saldo de multa ou estornar pagamento | Não permitido | Permitido, com motivo e rastreabilidade |
 | Gerir papéis e estado de acesso | Não permitido | Permitido |
 | Estornar, cancelar ou ajustar transações financeiras | Não permitido | Permitido, com rastreabilidade e preservação do histórico |
 

@@ -59,6 +59,15 @@ query "locacoes" verb=POST {
                 error_type = "inputerror"
                 error = "Cliente não elegível para locação."
               }
+              // Bloqueio financeiro, independente do bloqueio manual: multa com saldo.
+              db.query fine {
+                where = $db.fine.customer_id == $customer.id && $db.fine.status == "open"
+                return = {type: "exists"}
+              } as $open_fine
+              precondition ($open_fine == false) {
+                error_type = "inputerror"
+                error = "Cliente com multa em aberto."
+              }
               db.get exemplar {
                 field_name = "id"
                 field_value = $input.exemplar_id

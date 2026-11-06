@@ -20,22 +20,55 @@ A rota `/clientes` SHALL exibir, para uma sessão válida, a barra superior comp
 
 A busca por nome e por CPF completo SHALL atualizar o estado a cada alteração e consultar o servidor somente pela ação “Buscar”, que retorna à página 1. A paginação SHALL continuar no servidor, com “Anterior”, “Próxima” e o indicador “Página X · N cliente(s)”, desabilitando as ações quando não houver página correspondente.
 
+#### Scenario: Busca retorna à primeira página
+- **WHEN** o usuário altera a busca e aciona “Buscar” estando na página 3
+- **THEN** a consulta é feita ao servidor a partir da página 1
+
 ### Requirement: Estados de carregamento, erro, sucesso e vazio são preservados
 
 A tela SHALL exibir o carregamento com papel `status`, o erro de consulta com papel `alert`, a mensagem de sucesso com papel `status` e “Nenhum cliente encontrado.” quando a consulta não retorna clientes. Durante erro ou carregamento, a tabela SHALL NOT ser exibida.
+
+#### Scenario: Consulta sem resultados
+- **WHEN** a consulta não retorna clientes
+- **THEN** a tela exibe “Nenhum cliente encontrado.” sem tabela
 
 ### Requirement: Cadastro e edição mantêm rotas, validações e a distinção entre situação e bloqueio
 
 As rotas `/clientes/novo` e `/clientes/{id}/editar` SHALL permanecer páginas, com o visual de painel de vidro e a barra superior de Clientes, sem modal. SHALL manter os campos Nome completo, CPF, E-mail e Telefone, os limites de 200 e 254 caracteres, o aviso “Informe ao menos um contato: e-mail ou telefone.”, os handlers `capture_customer_*` e `submit_customer`, a normalização e a validação existentes (CPF sem pontuação, e-mail em minúsculas, telefone de 10 ou 11 dígitos), a exibição do erro com papel `alert` e o redirecionamento a `/clientes` após salvar. A unicidade de CPF e de e-mail SHALL continuar garantida pelo backend, com a mensagem retornada exibida. A situação cadastral (`active` ou `inactive`) SHALL ser alterável somente na edição, por botões segmentados rotulados “Ativo” e “Inativo”, e a inativação SHALL substituir qualquer exclusão. Cancelar e fechar SHALL voltar à lista sem salvar. Somente administradores SHALL acessar estas rotas, conforme os handlers existentes.
 
+#### Scenario: Inativação substitui exclusão
+- **WHEN** um administrador edita um cliente
+- **THEN** pode mudar a situação para “Inativo”, e nenhuma ação de exclusão é oferecida
+
 ### Requirement: Detalhe apresenta dados protegidos e controla o bloqueio manual
 
 A rota `/clientes/{id}` SHALL exibir o nome com avatar e selos de situação cadastral e de bloqueio manual, “Dados do cliente” (CPF, e-mail, telefone, situação e bloqueio manual, com “Não informado” para contatos ausentes) e, para administradores, “Editar cadastro” e “Controle de bloqueio manual”. O controle SHALL manter `toggle_customer_manual_block` e `capture_customer_block_reason`, exigir motivo de até 500 caracteres para aplicar o bloqueio, exibir o motivo quando o bloqueio estiver ativo, indicar que o bloqueio é registrado em nome do usuário autenticado e permitir remover o bloqueio sem alterar a situação cadastral. Usuários não administradores SHALL consultar o detalhe sem “Editar cadastro” nem o controle de bloqueio.
 
-### Requirement: Histórico e pendências permanecem sem dados até os domínios de origem
+#### Scenario: Membro consulta o detalhe
+- **WHEN** um usuário não administrador abre `/clientes/{id}`
+- **THEN** vê os dados do cliente sem “Editar cadastro” nem o controle de bloqueio manual
 
-O detalhe SHALL exibir a seção “Histórico e pendências” com as abas “Locações”, “Multas” e “Pagamentos” desabilitadas e identificadas como “Em breve”, e a mensagem “Aguardando implementação das capacidades de locações, multas e pagamentos. Nenhum saldo ou histórico financeiro é apresentado nesta versão.”. A seção SHALL NOT exibir valores, saldos, listas ou registros fictícios.
+### Requirement: Histórico e pendências apresentam dados reais do cliente
+
+O detalhe SHALL exibir a seção "Histórico e pendências" com as abas "Locações", "Multas" e "Pagamentos", todas habilitadas e carregadas sob demanda para o cliente exibido:
+- "Locações" SHALL listar as locações do cliente (`GET /locacoes?customer_id`), com filme, exemplar, retirada, vencimento, situação e link para o detalhe;
+- "Multas" SHALL listar as multas do cliente, com dias, valor, pago, saldo, situação e link para `/multas/{id}`;
+- "Pagamentos" SHALL listar os pagamentos do cliente, com valor, meio, instante, responsável e situação, inclusive os estornados.
+
+Acima das abas, SHALL ser exibido o saldo em aberto do cliente e, havendo multa `open`, o aviso "Novas locações bloqueadas até a quitação". Cada aba SHALL ter paginação, estado vazio, erro com "Tentar novamente" e tratamento de 429 sem novas tentativas automáticas. A seção SHALL NOT exibir valores, saldos, listas ou registros fictícios, e SHALL descartar os dados ao trocar de cliente ou de sessão.
+
+#### Scenario: Cliente sem histórico
+- **WHEN** o cliente não tem locações, multas nem pagamentos
+- **THEN** cada aba informa a ausência de registros, e o saldo em aberto é "R$ 0,00"
+
+#### Scenario: Cliente com multa em aberto
+- **WHEN** o cliente possui uma multa `open` com saldo de 600 centavos
+- **THEN** o detalhe mostra saldo de "R$ 6,00" e o aviso de bloqueio de novas locações
 
 ### Requirement: Layout responsivo
 
 Em até 1100 px o detalhe SHALL passar a uma coluna; em até 900 px a tabela SHALL virar cartões empilhados; em até 640 px os campos do formulário e os dados do cliente SHALL usar uma coluna e a busca SHALL ocupar a largura total, sem rolagem horizontal da página. Todos os controles SHALL ter indicação de foco visível.
+
+#### Scenario: Tela estreita
+- **WHEN** a largura é de até 900 px
+- **THEN** a lista vira cartões empilhados, sem rolagem horizontal da página

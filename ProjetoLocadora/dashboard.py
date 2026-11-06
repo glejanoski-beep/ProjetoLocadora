@@ -83,6 +83,40 @@ def empty_metric_card(label: str, icon_name: str, identifier: str) -> rx.Compone
     )
 
 
+def fines_metric_card() -> rx.Component:
+    """Saldo real das multas em aberto; sem valor enquanto não houver resposta."""
+    succeeded = DashboardState.fines_status == "success"
+    return _card_shell(
+        "Multas pendentes",
+        "wallet",
+        rx.el.p(
+            rx.cond(succeeded, DashboardState.fines_balance, rx.cond(DashboardState.fines_status == "loading", "…", "—")),
+            class_name=rx.cond(succeeded, "vitrine-dash__value", "vitrine-dash__value vitrine-dash__value--empty"),
+            aria_live="polite",
+        ),
+        rx.el.p(
+            rx.match(
+                DashboardState.fines_status,
+                (
+                    "success",
+                    rx.match(
+                        DashboardState.fines_count,
+                        (0, "Nenhuma multa em aberto"),
+                        (1, "1 multa em aberto"),
+                        DashboardState.fines_count.to_string() + " multas em aberto",
+                    ),
+                ),
+                ("loading", "Carregando multas…"),
+                ("error", "Indisponível no momento"),
+                "Sem dados ainda",
+            ),
+            class_name="vitrine-dash__card-note",
+        ),
+        rx.el.a("Ver multas", href="/multas", class_name="vitrine-dash__link"),
+        identifier="dashboard-multas-pendentes",
+    )
+
+
 def rental_metric_card() -> rx.Component:
     """Locações ativas a partir da listagem real; sem valor enquanto não houver resposta."""
     succeeded = DashboardState.rentals_status == "success"
@@ -188,7 +222,7 @@ def render_summary_toolbar(user_role) -> rx.Component:
             rx.button(
                 "Atualizar",
                 # Resumo (revalida a sessão), locações e clientes, como eventos separados.
-                on_click=[DashboardState.refresh_summary, DashboardState.load_rentals, DashboardState.load_customers],
+                on_click=[DashboardState.refresh_summary, DashboardState.load_rentals, DashboardState.load_customers, DashboardState.load_fines],
                 loading=DashboardState.loading,
                 disabled=(DashboardState.loading
                           | (DashboardState.status == "forbidden")

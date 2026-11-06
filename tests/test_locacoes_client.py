@@ -190,13 +190,32 @@ class TestRentalTransport(unittest.IsolatedAsyncioTestCase):
 
     async def test_return_posts_only_the_key_once_and_validates_the_result(self):
         result = await self.call(lambda: client.return_rental("private-secret", 3, RETURN_KEY), httpx.Response(200, json={"rental": RETURNED, "audit_succeeded": True}))
-        self.assertEqual(result, (RETURNED, True))
+        self.assertEqual(result, (RETURNED, True, None))
         self.assertEqual(len(self.requests), 1)
         request = self.requests[0]
         self.assertEqual(request.method, "POST")
         self.assertEqual(request.url.path, "/api:rentals/locacoes/3/devolucao")
         self.assertEqual(json.loads(request.content), {"operation_key": RETURN_KEY})
         self.assertEqual(request.headers["Authorization"], "Bearer private-secret")
+
+    async def test_return_accepts_the_generated_fine_or_null(self):
+        from tests.test_locacoes_devolucao import fine_for
+
+        fine = fine_for(RETURNED)
+        result = await self.call(lambda: client.return_rental("t", 3, RETURN_KEY), httpx.Response(200, json={"rental": RETURNED, "fine": fine, "audit_succeeded": True}))
+        self.assertEqual(result, (RETURNED, True, fine))
+        result = await self.call(lambda: client.return_rental("t", 3, RETURN_KEY), httpx.Response(200, json={"rental": RETURNED, "fine": None, "audit_succeeded": True}))
+        self.assertEqual(result, (RETURNED, True, None))
+        # Multa de outra locação ou incoerente: resultado desconhecido, nunca sucesso.
+        for bad in ({**fine, "rental_id": 99}, {**fine, "paid_cents": -1}, {**fine, "status": "paid"}):
+            with self.subTest(bad=bad), self.assertRaises(client.RentalError) as error:
+                await self.call(lambda: client.return_rental("t", 3, RETURN_KEY), httpx.Response(200, json={"rental": RETURNED, "fine": bad, "audit_succeeded": True}))
+            self.assertEqual(error.exception.category, "unknown")
+
+    async def test_fine_block_has_its_own_message(self):
+        with self.assertRaises(client.RentalError) as error:
+            await self.call(lambda: client.create_rental("t", {"customer_id": 1, "exemplar_id": 2, "due_at": "2030-01-01T10:00:00-03:00", "operation_key": RETURN_KEY}), httpx.Response(400, json={"message": "Cliente com multa em aberto."}))
+        self.assertEqual(error.exception.category, "fineblock")
 
     async def test_return_gate_and_input_send_nothing(self):
         with patch.dict(os.environ, {"XANO_RENTAL_WRITES_ENABLED": "false"}), self.assertRaises(client.RentalError) as error:
