@@ -40,3 +40,145 @@
 .vitrine-usuarios__row--self {
   cursor: default;
 }
+
+/* Tema claro: cores específicas da página de usuários */
+[data-theme="light"] .vitrine-usuarios__search {
+  color: #18181b;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.18);
+  color-scheme: light;
+}
+
+[data-theme="light"] .vitrine-usuarios__search::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+[data-theme="light"] .vitrine-usuarios__row-button {
+  color: #18181b;
+}
+
+[data-theme="light"] .vitrine-usuarios__row-button:hover {
+  background: rgba(15, 23, 42, 0.055);
+}
+
+[data-theme="light"] .vitrine-usuarios__row-button:focus-visible {
+  outline: 2px solid #dc2638;
+  outline-offset: 2px;
+}
+
+[data-theme="light"] .vitrine-usuarios__self {
+  color: #27272a;
+  background: rgba(15, 23, 42, 0.055);
+  border: 1px solid rgba(30, 41, 59, 0.16);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__row-title {
+  color: #18181b;
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__row-meta,
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__row-when,
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__hint {
+  color: #64748b;
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__tab {
+  color: #27272a;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.16);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-locacoes__tab--on {
+  color: #18181b;
+  background: rgba(15, 23, 42, 0.08);
+  border-color: rgba(30, 41, 59, 0.24);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-clientes__secondary {
+  color: #27272a;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.18);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-clientes__secondary:hover:not(:disabled) {
+  color: #18181b;
+  background: rgba(15, 23, 42, 0.055);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-multas__chip {
+  color: #27272a;
+  background: rgba(15, 23, 42, 0.055);
+  border-color: rgba(30, 41, 59, 0.16);
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-multas__chip--paid {
+  color: #166534;
+  background: #ecfdf3;
+  border-color: #86efac;
+}
+
+[data-theme="light"] .vitrine-usuarios .vitrine-multas__chip--open {
+  color: #92400e;
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+/* Modal de alteração da conta */
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) {
+  color: #18181b;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.16);
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.18);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__dialog-title,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__label,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__toggle {
+  color: #18181b;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__dialog-sub,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__hint {
+  color: #64748b;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__close,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__cancel {
+  color: #27272a;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.18);
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__close:hover,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__cancel:hover {
+  color: #18181b;
+  background: rgba(15, 23, 42, 0.055);
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__input,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__select {
+  color: #18181b;
+  background: #ffffff;
+  border-color: rgba(30, 41, 59, 0.18);
+  color-scheme: light;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__input::placeholder,
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__primary {
+  color: #ffffff;
+  background: #dc2638;
+  border-color: #dc2638;
+}
+
+[data-theme="light"] .vitrine-exemplares-dialog:has(.vitrine-exemplares__dialog-title) .vitrine-exemplares__danger {
+  color: #ffffff;
+  background: #dc2638;
+}

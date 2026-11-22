@@ -10,21 +10,11 @@ query usuarios verb=GET {
       input = {user_id: $auth.id, required_role: "admin"}
     } as $role_check
     db.query user {
-      sort = {user.name: "asc"}
-      output = ["id", "name", "email", "role", "is_active", "created_at"]
-      return = {type: "list", paging: {page: 1, per_page: 500}}
+      return = {type: "list", paging: {page: 1, per_page: 500, totals: true, metadata: true}}
+      output = ["items.id", "items.name", "items.email", "items.role", "items.is_active", "items.created_at"]
     } as $users
-    var $items { value = [] }
-    foreach ($users.items) {
-      each as $row {
-        var $item {
-          value = {}|set:"id":$row.id|set:"name":($row.name ?? "")|set:"email":($row.email ?? "")|set:"role":($row.role ?? "")|set:"is_active":($row.is_active != false)|set:"created_at":$row.created_at
-        }
-        var.update $items { value = $items|push:$item }
-      }
-    }
   }
-  response = {items: $items}
+  response = {items: $users.items}
   tags = []
   guid = "YB1TCj5oEEp_RgEJfYeBPD-QyQk"
 }

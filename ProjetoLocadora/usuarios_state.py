@@ -86,6 +86,9 @@ class UsuariosState(_SessionBound, rx.State):
         except (UserError, FineError) as error:
             if revision == self._revision and (context is None or self._current(*context)):
                 await self._show_user_error(error)
+                if error.category == "authentication":
+                    yield rx.redirect("/login")
+                    return
                 self.state = "forbidden" if error.category == "authorization" else "error"
         finally:
             if revision == self._revision:
@@ -94,7 +97,12 @@ class UsuariosState(_SessionBound, rx.State):
     async def _show_user_error(self, error) -> None:
         await self._show_error(error)
         if error.category != "ratelimited":
-            self.message = getattr(error, "detail", "") or MESSAGES.get(error.category, MESSAGES["unavailable"])
+            if error.category == "authentication":
+                self.message = MESSAGES["authentication"]
+            elif error.category == "authorization":
+                self.message = MESSAGES["authorization"]
+            else:
+                self.message = getattr(error, "detail", "") or MESSAGES.get(error.category, MESSAGES["unavailable"])
 
     @rx.event
     async def open_page(self):

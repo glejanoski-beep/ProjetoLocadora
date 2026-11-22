@@ -75,6 +75,16 @@ class TestUserTransport(unittest.IsolatedAsyncioTestCase):
         result = await self.call(httpx.Response(200, json={"items": USERS}), lambda: client.list_users("tok"))
         self.assertEqual(result, USERS)
         self.assertEqual(self.requests[0].url.path, "/api:rentals/usuarios")
+        self.assertEqual(self.requests[0].headers["Authorization"], "Bearer tok")
+
+    async def test_unauthenticated_list_is_not_reported_as_unavailable(self):
+        with self.assertRaises(client.UserError) as error:
+            await self.call(
+                httpx.Response(401, json={"message": "Unauthorized - Authentication Required"}),
+                lambda: client.list_users("expired-token"),
+            )
+        self.assertEqual(error.exception.category, "authentication")
+        self.assertEqual(str(error.exception), "Entre novamente para gerenciar usuários.")
 
     async def test_update_sends_full_target_state_without_rental_flag(self):
         updated = {**ANA, "role": "admin"}
@@ -124,6 +134,13 @@ class TestUserState(unittest.IsolatedAsyncioTestCase):
         await consume(self.state.open_page())
         self.assertEqual(self.state.state, "forbidden")
         self.list.assert_not_awaited()
+
+    async def test_expired_token_clears_session_and_redirects(self):
+        self.list.side_effect = client.UserError("authentication")
+        await consume(self.state.open_page())
+        self.assertEqual(self.session._xano_auth_token, "")
+        self.assertEqual(self.session._user_id, "")
+        self.assertEqual(self.state.state, "idle")
 
     async def test_own_account_is_marked_and_cannot_be_opened(self):
         await consume(self.state.open_page())
@@ -209,7 +226,9 @@ class TestUserXanoContract(unittest.TestCase):
         source, stack = stack_of("api/locacoes/usuarios_GET.xs")
         self.assertEqual(stack[:2], ("function.run", '"Quick Start/enforce_role"'))
         self.assertIn('"admin"', list(flatten(stack[2][1])))
-        self.assertIn('output = ["id", "name", "email", "role", "is_active", "created_at"]', source)
+        self.assertIn('output = ["items.id", "items.name", "items.email", "items.role", "items.is_active", "items.created_at"]', source)
+        self.assertNotIn("sort = {user.name:", source)
+        self.assertIn("response = {items: $users.items}", source)
         for secret in ("password", "password_reset"):
             self.assertNotIn(secret, source.split("query", 1)[1])
         for statement in ("db.add", "db.edit", "db.del", "db.transaction"):
