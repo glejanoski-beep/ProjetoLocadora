@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ProjetoLocadora.usuarios_state import UsuariosState
 from ProjetoLocadora.usuarios_ui import users_page
+from ProjetoLocadora.usuarios import validar_novo_usuario
 
 
 class TestUsuariosInterface(unittest.TestCase):
@@ -29,6 +30,12 @@ class TestUsuariosInterface(unittest.TestCase):
         self.assertIn("vitrine-dash__title", rendered)
         self.assertIn("vitrine-usuarios__filters", rendered)
         self.assertIn("vitrine-exemplares-dialog", rendered)
+        self.assertIn("novo-usuario-email", rendered)
+
+    def test_new_user_validation_accepts_member_and_rejects_invalid_email(self) -> None:
+        self.assertEqual(validar_novo_usuario(" Novo Usuário ", " NOVO@example.test ", "member"), ("Novo Usuário", "novo@example.test"))
+        with self.assertRaises(ValueError):
+            validar_novo_usuario("Novo Usuário", "email-invalido", "member")
 
     def test_light_theme_has_specific_users_and_modal_styles(self) -> None:
         css_path = Path(__file__).resolve().parents[2] / "assets" / "usuarios.css"

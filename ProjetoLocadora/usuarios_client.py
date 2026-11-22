@@ -19,6 +19,7 @@ NO_CHANGE = "Nenhuma alteração informada."
 BUSINESS = frozenset({
     "Você não pode alterar a própria conta.", NO_CHANGE, "Usuário não encontrado.",
     "Informe o motivo da alteração (até 500 caracteres).",
+    "Já existe uma conta com este e-mail.",
 })
 
 
@@ -39,6 +40,40 @@ async def list_users(token: str) -> list[Usuario]:
         return validar_lista(data)
     except (ValueError, TypeError, KeyError):
         raise UserError("invalid") from None
+
+
+async def create_user(token: str, name: str, email: str, role: str) -> Usuario:
+    if role not in ROLES:
+        raise UserError("input")
+    clean_name = name.strip() if isinstance(name, str) else ""
+    if not clean_name or len(clean_name) > 200:
+        raise UserError("input")
+    try:
+        clean_email = email.strip().lower()
+    except (AttributeError, TypeError):
+        raise UserError("input") from None
+    if not clean_email:
+        raise UserError("input")
+    try:
+        data = await _request(
+            token,
+            "POST",
+            "usuarios",
+            payload={"name": clean_name, "email": clean_email, "role": role},
+            gated=False,
+            business=BUSINESS,
+        )
+    except FineError as error:
+        raise UserError(error.category, error.retry_after, error.detail) from None
+    try:
+        if type(data) is not dict or set(data) != {"user", "audit_succeeded"}:
+            raise ValueError
+        user = validar_usuario(data["user"])
+        if user["name"] != clean_name or user["email"] != clean_email or user["role"] != role or user["is_active"] is not True:
+            raise ValueError
+        return user
+    except (ValueError, TypeError, KeyError):
+        raise UserError("unknown") from None
 
 
 async def update_user(token: str, user_id: int, role: str, is_active: bool, reason: str) -> Usuario:

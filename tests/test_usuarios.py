@@ -77,6 +77,20 @@ class TestUserTransport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.requests[0].url.path, "/api:rentals/usuarios")
         self.assertEqual(self.requests[0].headers["Authorization"], "Bearer tok")
 
+    async def test_create_sends_email_and_role_without_password(self):
+        created = {**ANA, "name": "Novo Usuário", "email": "nova@example.test", "role": "member"}
+        result = await self.call(
+            httpx.Response(200, json={"user": created, "audit_succeeded": True}),
+            lambda: client.create_user("tok", " Novo Usuário ", " nova@example.test ", "member"),
+        )
+        self.assertEqual(result["name"], "Novo Usuário")
+        self.assertEqual(result["email"], "nova@example.test")
+        request = self.requests[0]
+        self.assertEqual((request.method, request.url.path), ("POST", "/api:rentals/usuarios"))
+        payload = json.loads(request.content)
+        self.assertEqual(payload, {"name": "Novo Usuário", "email": "nova@example.test", "role": "member"})
+        self.assertNotIn("password", payload)
+
     async def test_unauthenticated_list_is_not_reported_as_unavailable(self):
         with self.assertRaises(client.UserError) as error:
             await self.call(
@@ -103,6 +117,15 @@ class TestUserTransport(unittest.IsolatedAsyncioTestCase):
                 await self.call(httpx.Response(400, json={"message": message}), lambda: client.update_user("tok", 5, "admin", True, "x"))
             self.assertEqual((error.exception.category, str(error.exception)), ("conflict", message))
 
+    async def test_duplicate_email_is_reported_as_conflict(self):
+        message = "Já existe uma conta com este e-mail."
+        with self.assertRaises(client.UserError) as error:
+            await self.call(
+                httpx.Response(400, json={"message": message}),
+                lambda: client.create_user("tok", "Ana", "ana@example.test", "member"),
+            )
+        self.assertEqual((error.exception.category, str(error.exception)), ("conflict", message))
+
     async def test_mismatched_write_response_is_uncertain(self):
         with self.assertRaises(client.UserError) as error:
             await self.call(
@@ -127,6 +150,7 @@ class TestUserState(unittest.IsolatedAsyncioTestCase):
         patch("ProjetoLocadora.multas_state.get_me_xano", new=AsyncMock(return_value={"id": 3, "role": "admin", "is_active": True})).start()
         self.list = patch("ProjetoLocadora.usuarios_state.list_users", new=AsyncMock(return_value=USERS)).start()
         self.update = patch("ProjetoLocadora.usuarios_state.update_user", new=AsyncMock()).start()
+        self.create = patch("ProjetoLocadora.usuarios_state.create_user", new=AsyncMock()).start()
         self.addCleanup(patch.stopall)
 
     async def test_member_never_queries(self):
@@ -149,6 +173,27 @@ class TestUserState(unittest.IsolatedAsyncioTestCase):
         self.state.open_edit(3)
         self.assertFalse(self.state.edit_open)
         self.assertEqual(self.state.summary, "3 contas · 2 ativas")
+
+    async def test_create_modal_adds_account_without_password(self):
+        await consume(self.state.open_page())
+        new_user = {
+            "id": 9,
+            "name": "Novo Usuário",
+            "email": "novo@example.test",
+            "role": "member",
+            "is_active": True,
+            "created_at": 1763000000000,
+        }
+        self.create.return_value = new_user
+        self.state.open_create()
+        self.state.capture_create_name("Novo Usuário")
+        self.state.capture_create_email("novo@example.test")
+        self.state.capture_create_role("Funcionário")
+        await consume(self.state.submit_create())
+        self.create.assert_awaited_once_with("private-token", "Novo Usuário", "novo@example.test", "member")
+        self.assertFalse(self.state.create_open)
+        self.assertIn("Esqueci minha senha", self.state.notice)
+        self.assertTrue(any(row["email"] == "novo@example.test" for row in self.state.rows))
 
     async def test_promotion_updates_the_row(self):
         await consume(self.state.open_page())
@@ -222,6 +267,17 @@ def stack_of(relative: str):
 
 
 class TestUserXanoContract(unittest.TestCase):
+    def test_create_is_admin_only_and_never_receives_password(self):
+        source, stack = stack_of("api/locacoes/usuarios_POST.xs")
+        self.assertEqual(stack[:2], ("function.run", '"Quick Start/enforce_role"'))
+        self.assertIn('"admin"', list(flatten(stack[2][1])))
+        self.assertIn("email email filters=trim|lower", source)
+        self.assertIn('values = ["admin", "member"]', source)
+        self.assertIn("is_active: true", source)
+        self.assertNotIn("password:", source)
+        self.assertIn("Já existe uma conta com este e-mail.", source)
+        self.assertIn("create_user", source)
+
     def test_list_is_admin_only_and_never_reads_secrets(self):
         source, stack = stack_of("api/locacoes/usuarios_GET.xs")
         self.assertEqual(stack[:2], ("function.run", '"Quick Start/enforce_role"'))

@@ -7,8 +7,8 @@ import reflex as rx
 from ProjetoLocadora.locacoes import data_brasilia
 from ProjetoLocadora.multas_client import FineError
 from ProjetoLocadora.multas_state import _SessionBound
-from ProjetoLocadora.usuarios import MAX_USERS, ROLE_BY_LABEL, ROLES, STATUS_FILTERS, filtrar, validar_motivo
-from ProjetoLocadora.usuarios_client import MESSAGES, UserError, list_users, update_user
+from ProjetoLocadora.usuarios import MAX_USERS, ROLE_BY_LABEL, ROLES, STATUS_FILTERS, filtrar, validar_motivo, validar_novo_usuario
+from ProjetoLocadora.usuarios_client import MESSAGES, UserError, create_user, list_users, update_user
 
 
 class UserRow(TypedDict):
@@ -45,6 +45,12 @@ class UsuariosState(_SessionBound, rx.State):
     edit_error: str = ""
     confirming: bool = False
     saving: bool = False
+    create_open: bool = False
+    create_name: str = ""
+    create_email: str = ""
+    create_role: str = "member"
+    create_error: str = ""
+    creating: bool = False
 
     def _invalidate(self) -> None:
         self._revision += 1
@@ -60,6 +66,11 @@ class UsuariosState(_SessionBound, rx.State):
         self.edit_open = self.confirming = False
         self.edit_id, self.edit_role, self.edit_active = 0, "member", True
         self.edit_reason = self.edit_error = ""
+        self.create_open = self.creating = False
+        self.create_name = ""
+        self.create_email = ""
+        self.create_role = "member"
+        self.create_error = ""
 
     # ---------- Lista ----------
 
@@ -212,6 +223,86 @@ class UsuariosState(_SessionBound, rx.State):
     @rx.var
     def role_options(self) -> list[str]:
         return list(ROLES.values())
+
+    @rx.event
+    def open_create(self):
+        self.create_open = True
+        self.create_name = ""
+        self.create_email = ""
+        self.create_role = "member"
+        self.create_error = ""
+
+    @rx.event
+    def set_create_open(self, value: bool):
+        if not value and not self.creating:
+            self.create_open = False
+            self.create_name = ""
+            self.create_email = ""
+            self.create_role = "member"
+            self.create_error = ""
+
+    @rx.event
+    def capture_create_name(self, value: str):
+        if not self.creating:
+            self.create_name = value[:200]
+            self.create_error = ""
+
+    @rx.event
+    def capture_create_email(self, value: str):
+        if not self.creating:
+            self.create_email = value[:254]
+            self.create_error = ""
+
+    @rx.event
+    def capture_create_role(self, label: str):
+        if label in ROLE_BY_LABEL and not self.creating:
+            self.create_role = ROLE_BY_LABEL[label]
+            self.create_error = ""
+
+    @rx.var
+    def create_role_label(self) -> str:
+        return ROLES.get(self.create_role, "")
+
+    @rx.event
+    async def submit_create(self):
+        if self.creating or not self.create_open:
+            return
+        try:
+            name, email = validar_novo_usuario(self.create_name, self.create_email, self.create_role)
+        except ValueError as error:
+            self.create_error = str(error)
+            return
+        revision, context = self._revision, None
+        self.creating = True
+        self.create_error = ""
+        yield
+        try:
+            context = await self._authorize(fresh=True)
+            if context is None:
+                self.create_open = False
+                return
+            created = await create_user(context[1][2], name, email, self.create_role)
+            if self._current(*context):
+                self._users = [created, *self._users]
+                self.create_open = False
+                self.create_name = ""
+                self.create_email = ""
+                self.create_role = "member"
+                self.create_error = ""
+                self.notice = "Novo usuário cadastrado. Ele poderá definir a senha pela opção Esqueci minha senha."
+        except (UserError, FineError) as error:
+            if revision != self._revision or (context is not None and not self._current(*context)):
+                return
+            if error.category in {"authentication", "authorization"}:
+                self.create_open = False
+                await self._show_user_error(error)
+                if error.category == "authorization":
+                    self.state, self._users = "forbidden", []
+                return
+            self.create_error = getattr(error, "detail", "") or MESSAGES.get(error.category, MESSAGES["unavailable"])
+        finally:
+            if revision == self._revision:
+                self.creating = False
 
     @rx.event
     async def submit_edit(self):

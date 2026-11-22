@@ -1,5 +1,6 @@
 """Contas internas: rótulos, contrato do item recebido, busca e motivo (gerenciar-usuarios)."""
 
+import re
 import unicodedata
 from typing import TypedDict
 
@@ -70,3 +71,19 @@ def validar_motivo(motivo: str) -> str:
     if len(clean) > 500:
         raise ValueError("O motivo pode ter no máximo 500 caracteres.")
     return clean
+
+
+def validar_novo_usuario(name: str, email: str, role: str) -> tuple[str, str]:
+    clean_name = name.strip() if isinstance(name, str) else ""
+    if not clean_name:
+        raise ValueError("Informe o nome da nova conta.")
+    if len(clean_name) > 200:
+        raise ValueError("O nome pode ter no máximo 200 caracteres.")
+    clean_email = email.strip().lower() if isinstance(email, str) else ""
+    if not clean_email:
+        raise ValueError("Informe o e-mail da nova conta.")
+    if len(clean_email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", clean_email):
+        raise ValueError("Informe um e-mail válido.")
+    if role not in ROLES:
+        raise ValueError("Selecione um papel válido.")
+    return clean_name, clean_email

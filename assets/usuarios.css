@@ -41,6 +41,14 @@
   cursor: default;
 }
 
+.vitrine-usuarios__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* Tema claro: cores específicas da página de usuários */
 [data-theme="light"] .vitrine-usuarios__search {
   color: #18181b;

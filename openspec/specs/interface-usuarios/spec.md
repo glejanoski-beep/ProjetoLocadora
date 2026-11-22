@@ -33,6 +33,11 @@ A rota `/usuarios` SHALL exigir sessão. Para `admin`, SHALL listar as contas co
 - **WHEN** o tema escuro está ativo na página de usuários
 - **THEN** a apresentação existente em modo escuro permanece visualmente coerente e legível
 
+#### Scenario: Botão novo usuário
+- **WHEN** um administrador visualiza a página de usuários
+- **THEN** vê o botão “Novo usuário”
+- **AND** o botão abre o modal de criação
+
 ### Requirement: Diálogo de alteração de conta
 
 Para cada conta que não seja a própria, o admin SHALL poder abrir um diálogo com papel, situação e motivo obrigatório. O envio SHALL ocorrer uma única vez por clique, a lista SHALL ser atualizada com a resposta do backend e as recusas de negócio SHALL ser exibidas como vieram, mantendo o diálogo aberto. A própria conta SHALL aparecer marcada como "Você", sem ação de alteração. Desativar uma conta SHALL pedir confirmação explicando que a pessoa perde o acesso. Os controles, textos, bordas e ações do modal SHALL usar a paleta correspondente ao tema ativo.
@@ -60,3 +65,33 @@ Para cada conta que não seja a própria, o admin SHALL poder abrir um diálogo 
 #### Scenario: Modal no modo escuro
 - **WHEN** o tema escuro está ativo e o admin abre o diálogo de alteração ou confirmação
 - **THEN** o modal conserva a apresentação escura atual e todos os textos permanecem legíveis
+
+### Requirement: Diálogo de criação de conta
+
+Um administrador SHALL poder abrir um modal simples para cadastrar nova conta informando nome, e-mail e papel. O nome SHALL ser obrigatório e SHALL ter no máximo 200 caracteres. O papel SHALL aceitar somente `Administrador` ou `Funcionário`. O modal SHALL validar nome e e-mail antes do envio, não solicitar senha inicial e explicar que o novo usuário deverá usar “Esqueci minha senha” para definir a própria senha.
+
+#### Scenario: Validação local
+- **WHEN** o administrador tenta enviar o modal sem nome ou com e-mail inválido
+- **THEN** a interface informa o problema
+- **AND** nenhuma requisição é enviada
+
+#### Scenario: Criação bem-sucedida
+- **WHEN** o administrador informa nome e e-mail válidos, seleciona um papel e confirma
+- **THEN** o backend cria uma conta ativa sem senha
+- **AND** o modal fecha
+- **AND** a nova conta aparece na lista
+- **AND** o modal informa que o usuário deverá usar “Esqueci minha senha”
+
+#### Scenario: E-mail duplicado
+- **WHEN** o backend rejeita o e-mail por já existir
+- **THEN** o modal permanece aberto
+- **AND** exibe a mensagem recebida
+
+#### Scenario: Cancelamento
+- **WHEN** o administrador fecha ou cancela o modal
+- **THEN** o rascunho é descartado
+- **AND** nenhum usuário é criado
+
+#### Scenario: Modal nos dois temas
+- **WHEN** o modal é aberto no modo claro ou escuro
+- **THEN** fundo, bordas, título, rótulos, campos, botão cancelar e botão criar permanecem legíveis

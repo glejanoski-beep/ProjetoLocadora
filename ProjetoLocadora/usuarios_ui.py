@@ -64,10 +64,18 @@ def _list() -> rx.Component:
                 rx.el.h2("Contas", class_name="vitrine-clientes__panel-title"),
                 rx.el.p(Users.summary, class_name="vitrine-clientes__panel-sub", aria_live="polite"),
             ),
-            rx.el.button(
-                rx.icon("refresh-cw", size=16, stroke_width=1.8, aria_hidden="true"),
-                "Atualizar lista", type="button", on_click=Users.reload, disabled=Users.loading,
-                class_name="vitrine-clientes__secondary",
+            rx.box(
+                rx.el.button(
+                    rx.icon("plus", size=16, stroke_width=1.8, aria_hidden="true"),
+                    "Novo usuário", type="button", on_click=Users.open_create,
+                    class_name="vitrine-clientes__primary",
+                ),
+                rx.el.button(
+                    rx.icon("refresh-cw", size=16, stroke_width=1.8, aria_hidden="true"),
+                    "Atualizar lista", type="button", on_click=Users.reload, disabled=Users.loading,
+                    class_name="vitrine-clientes__secondary",
+                ),
+                class_name="vitrine-usuarios__actions",
             ),
             class_name="vitrine-locacoes__list-head",
         ),
@@ -91,6 +99,101 @@ def _list() -> rx.Component:
         ),
         class_name="vitrine-clientes__panel vitrine-locacoes__list",
         aria_label="Contas",
+    )
+
+
+def _create_dialog() -> rx.Component:
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.box(
+                rx.box(
+                    rx.dialog.title("Novo usuário", class_name="vitrine-exemplares__dialog-title"),
+                    rx.dialog.description(
+                        "Cadastre uma conta ativa sem senha inicial.",
+                        class_name="vitrine-exemplares__dialog-sub",
+                    ),
+                ),
+                rx.dialog.close(
+                    rx.el.button(
+                        rx.icon("x", size=18, stroke_width=1.8, aria_hidden="true"),
+                        type="button",
+                        aria_label="Fechar",
+                        disabled=Users.creating,
+                        class_name="vitrine-exemplares__close",
+                    )
+                ),
+                class_name="vitrine-exemplares__dialog-head",
+            ),
+            rx.cond(
+                Users.create_error != "",
+                rx.box(Users.create_error, role="alert", class_name="vitrine-exemplares__alert"),
+            ),
+            rx.box(
+                rx.el.label("Nome", html_for="novo-usuario-nome", class_name="vitrine-exemplares__label"),
+                rx.el.input(
+                    id="novo-usuario-nome",
+                    type="text",
+                    value=Users.create_name,
+                    on_change=Users.capture_create_name,
+                    disabled=Users.creating,
+                    max_length=200,
+                    placeholder="Nome completo",
+                    auto_complete="name",
+                    class_name="vitrine-exemplares__input",
+                ),
+                class_name="vitrine-exemplares__field",
+            ),
+            rx.box(
+                rx.el.label("E-mail", html_for="novo-usuario-email", class_name="vitrine-exemplares__label"),
+                rx.el.input(
+                    id="novo-usuario-email",
+                    type="email",
+                    value=Users.create_email,
+                    on_change=Users.capture_create_email,
+                    disabled=Users.creating,
+                    placeholder="nome@exemplo.com",
+                    auto_complete="email",
+                    class_name="vitrine-exemplares__input",
+                ),
+                class_name="vitrine-exemplares__field",
+            ),
+            rx.box(
+                rx.el.label("Papel", html_for="novo-usuario-papel", class_name="vitrine-exemplares__label"),
+                rx.el.select(
+                    rx.foreach(Users.role_options, lambda option: rx.el.option(option, value=option)),
+                    id="novo-usuario-papel",
+                    value=Users.create_role_label,
+                    on_change=Users.capture_create_role,
+                    disabled=Users.creating,
+                    class_name="vitrine-exemplares__input vitrine-exemplares__select",
+                ),
+                class_name="vitrine-exemplares__field",
+            ),
+            rx.el.p(
+                "A conta será criada sem senha. O usuário deverá acessar “Esqueci minha senha” para definir a própria senha.",
+                class_name="vitrine-exemplares__hint",
+            ),
+            rx.box(
+                rx.dialog.close(
+                    rx.el.button(
+                        "Cancelar",
+                        type="button",
+                        disabled=Users.creating,
+                        class_name="vitrine-exemplares__cancel",
+                    )
+                ),
+                rx.button(
+                    "Criar usuário",
+                    on_click=Users.submit_create,
+                    loading=Users.creating,
+                    class_name="vitrine-exemplares__primary",
+                ),
+                class_name="vitrine-exemplares__dialog-actions",
+            ),
+            class_name="vitrine-exemplares-dialog",
+        ),
+        open=Users.create_open,
+        on_open_change=Users.set_create_open,
     )
 
 
@@ -196,6 +299,7 @@ def users_page(topbar: rx.Component) -> rx.Component:
                     ("ready", _list()),
                     rx.fragment(),
                 ),
+                _create_dialog(),
                 _edit_dialog(),
             ),
         ),
