@@ -22,7 +22,7 @@ query "multas/{id}" verb=GET {
       where = $db.payment.fine_id == $fine.id
       sort = {payment.id: "asc"}
       return = {type: "list"}
-      output = ["id", "fine_id", "customer_id", "amount_cents", "method", "paid_at", "registered_by", "status", "reversed_at", "reversed_by", "reversal_reason"]
+      output = ["id", "fine_id", "customer_id", "amount_cents", "method", "origin", "paid_at", "registered_by", "status", "reversed_at", "reversed_by", "reversal_reason"]
     } as $payments
   }
   response = {fine: $fine, payments: $payments}

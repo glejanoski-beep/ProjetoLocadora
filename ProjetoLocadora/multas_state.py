@@ -19,7 +19,8 @@ from ProjetoLocadora.multas import (
     FINE_STATUS, PAYMENT_METHODS, PAYMENT_STATUS, Fine, centavos, dias, reais, saldo,
 )
 from ProjetoLocadora.multas_client import (
-    MESSAGES, FineError, get_fine, list_fines, list_payments, pay_fine, reverse_payment, waive_fine,
+    MESSAGES, FineError, get_card_checkout, get_fine, list_fines, list_payments, pay_fine, reverse_payment, waive_fine,
+    start_card_checkout,
 )
 from ProjetoLocadora.xano_client import XanoSessionUnavailable, get_me_xano, is_authorized_employee
 
@@ -31,6 +32,15 @@ EMPTY = {
     "waived": "Nenhuma multa abonada.", "all": "Nenhuma multa registrada.",
 }
 METHOD_BY_LABEL = {label: key for key, label in PAYMENT_METHODS.items()}
+CHECKOUT_STATUS = {
+    "unknown": "Resultado da cobrança desconhecido; aguarda reconciliação administrativa",
+    "pending": "Aguardando confirmação",
+    "confirmed": "Confirmado pelo Asaas",
+    "rejected": "Recusado pelo Asaas",
+    "cancelled": "Cancelado",
+    "expired": "Expirado",
+    "reversed": "Estorno confirmado pelo Asaas",
+}
 
 
 def _fine_label(fine: Fine) -> str:
@@ -61,12 +71,15 @@ def payment_row(payment: dict) -> dict[str, str]:
         "id": str(payment["id"]),
         "amount": reais(payment["amount_cents"]),
         "method": PAYMENT_METHODS[payment["method"]],
+        "origin": "Asaas Checkout" if payment["origin"] == "asaas_checkout" else "Manual",
         "paid_at": data_brasilia(payment["paid_at"]),
         "registered_by": str(payment["registered_by"]),
         "status": PAYMENT_STATUS[payment["status"]],
         "reversed": "1" if payment["status"] == "reversed" else "",
         "reversal": (
-            f"Estornado em {data_brasilia(payment['reversed_at'])} pelo funcionário nº {payment['reversed_by']}: {payment['reversal_reason']}"
+            f"Estornado em {data_brasilia(payment['reversed_at'])} por "
+            + ("Asaas" if payment["reversed_by"] is None else f"funcionário nº {payment['reversed_by']}")
+            + f": {payment['reversal_reason']}"
             if payment["status"] == "reversed" else ""
         ),
         "fine_href": f"/multas/{payment['fine_id']}",
@@ -159,6 +172,9 @@ class MultasState(_SessionBound, rx.State):
     detail_id: str = ""
     _fine: dict = {}
     _payments: list[dict] = []
+    _card_checkout: dict = {}
+    _card_operation_key: str = ""
+    card_checkout_confirming: bool = False
     # Pagamento
     amount_text: str = ""
     method: str = "cash"
@@ -180,6 +196,9 @@ class MultasState(_SessionBound, rx.State):
         self._items, self._page, self._total = [], 1, 0
         self.detail_state, self.detail_id = "idle", ""
         self._fine, self._payments = {}, []
+        self._card_checkout = {}
+        self._card_operation_key = ""
+        self.card_checkout_confirming = False
         self._reset_forms()
 
     def _reset_forms(self) -> None:
@@ -318,6 +337,30 @@ class MultasState(_SessionBound, rx.State):
         return bool(self._fine) and self._fine["status"] != "waived"
 
     @rx.var
+    def card_checkout_pending(self) -> bool:
+        return bool(self._card_checkout) and self._card_checkout.get("status") == "pending"
+
+    @rx.var
+    def card_checkout_status(self) -> str:
+        return CHECKOUT_STATUS.get(self._card_checkout.get("status", ""), "")
+
+    @rx.var
+    def can_card_checkout(self) -> bool:
+        retryable = not self._card_checkout or self._card_checkout.get("status") in {"rejected", "cancelled", "expired"}
+        return self.is_open and rental_writes_enabled() and not self._busy and retryable and not self.card_checkout_confirming
+
+    @rx.event
+    def ask_card_payment(self):
+        if self.can_card_checkout:
+            self.card_checkout_confirming = True
+            self.message = self.notice = ""
+
+    @rx.event
+    def cancel_card_payment(self):
+        if not self._busy:
+            self.card_checkout_confirming = False
+
+    @rx.var
     def method_options(self) -> list[str]:
         return list(PAYMENT_METHODS.values())
 
@@ -326,16 +369,23 @@ class MultasState(_SessionBound, rx.State):
         return PAYMENT_METHODS.get(self.method, "")
 
     def _route_fine_id(self) -> str:
-        return str(self.router.page.params.get("fine_id", "")).strip()
+        # `router.page` foi removido/depreciado no Reflex 0.8.1. A rota é
+        # `/multas/[fine_id]`; o último segmento da URL é o identificador.
+        path = str(self.router.url.path).rstrip("/")
+        return path.rsplit("/", 1)[-1].strip() if path else ""
 
     @rx.event
     async def load_detail(self):
         if self._busy:
             return
         raw = self._route_fine_id()
+        if self.detail_id != raw:
+            self._card_checkout = {}
+            self._card_operation_key = ""
         self.detail_id = raw[:20]
         if not self._pay_pending and not self._admin_pending:
             self._fine, self._payments = {}, []
+            self._card_checkout = {}
             self._reset_forms()
         self.message = ""
         if not FINE_NUMBER.fullmatch(raw):
@@ -355,8 +405,18 @@ class MultasState(_SessionBound, rx.State):
                 self.detail_state = "error"
                 return
             fine, payments = await get_fine(context[1][2], int(raw))
+            checkout = None
+            try:
+                checkout = await get_card_checkout(context[1][2], int(raw))
+                if checkout["status"] == "pending":
+                    fine, payments = await get_fine(context[1][2], int(raw))
+            except FineError as checkout_error:
+                if checkout_error.category != "notfound":
+                    raise
             if self._current(*context):
                 self._fine, self._payments = fine, payments
+                self._card_checkout = checkout or {}
+                self._card_operation_key = checkout["operation_key"] if checkout else ""
                 self.detail_state = "ready"
                 self.writes_blocked = not rental_writes_enabled()
                 if not self.amount_text and fine["status"] == "open":
@@ -376,6 +436,74 @@ class MultasState(_SessionBound, rx.State):
                 self._busy = self.loading = False
 
     # ---------- Pagamento ----------
+
+    @rx.event
+    async def start_card_payment(self):
+        retryable = not self._card_checkout or self._card_checkout.get("status") in {"rejected", "cancelled", "expired"}
+        if not self.card_checkout_confirming or not self.is_open or not rental_writes_enabled() or self._busy or not retryable or not self._fine:
+            return
+        self._busy = self.loading = True
+        self.message = self.notice = ""
+        revision, context = self._revision, None
+        yield
+        try:
+            context = await self._authorize(fresh=True)
+            if context is None:
+                return
+            if not self._card_operation_key or (self._card_checkout and self._card_checkout.get("status") in {"rejected", "cancelled", "expired"}):
+                self._card_operation_key = str(uuid4())
+            checkout = await start_card_checkout(context[1][2], self._fine["id"], self._card_operation_key)
+            if self._current(*context):
+                self._card_checkout = checkout
+                self.card_checkout_confirming = False
+                if checkout["status"] == "unknown":
+                    self.notice = "O resultado da cobrança ainda é desconhecido. A tentativa está bloqueada até reconciliação administrativa."
+                else:
+                    self.notice = "Checkout criado. Você será encaminhado ao ambiente seguro do Asaas para concluir o cartão."
+                    yield rx.redirect(checkout["checkout_url"])
+        except FineError as error:
+            if revision == self._revision and (context is None or self._current(*context)):
+                if error.category == "unknown" and context is not None:
+                    try:
+                        checkout = await get_card_checkout(context[1][2], self._fine["id"], self._card_operation_key)
+                        if self._current(*context):
+                            self._card_checkout = checkout
+                            self.card_checkout_confirming = False
+                            if checkout["status"] == "unknown":
+                                self.notice = "O resultado da cobrança é desconhecido. Aguarde a reconciliação administrativa; não inicie outra cobrança."
+                            else:
+                                self.notice = "A tentativa foi localizada. Confira o estado antes de iniciar outra cobrança."
+                            return
+                    except FineError:
+                        pass
+                await self._show_error(error)
+        finally:
+            if revision == self._revision:
+                self._busy = self.loading = False
+
+    @rx.event
+    async def refresh_card_payment(self):
+        if self._busy or not self._fine:
+            return
+        self._busy = self.loading = True
+        revision, context = self._revision, None
+        yield
+        try:
+            context = await self._authorize(fresh=True)
+            if context is None:
+                return
+            checkout = await get_card_checkout(context[1][2], self._fine["id"], self._card_operation_key or None)
+            fine, payments = await get_fine(context[1][2], self._fine["id"])
+            if self._current(*context):
+                self._card_checkout, self._fine, self._payments = checkout, fine, payments
+                self._card_operation_key = checkout["operation_key"]
+                self.notice = "Estado da cobrança atualizado."
+        except FineError as error:
+            if revision == self._revision and (context is None or self._current(*context)):
+                await self._show_error(error)
+        finally:
+            if revision == self._revision:
+                self._busy = self.loading = False
 
     @rx.event
     def capture_amount(self, value: str):

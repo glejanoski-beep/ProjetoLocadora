@@ -4,7 +4,7 @@
 
 ### Requirement: Interface inicia cobrança de cartão sem prometer quitação
 
-Para multa `open`, a interface SHALL oferecer a ação de cobrar por cartão somente quando o backend informar que a operação está disponível. Após o envio, SHALL apresentar o estado retornado (`pending`, `confirmed`, `rejected`, `cancelled` ou equivalente), bloquear duplicidade e deixar claro que estados pendentes não representam quitação.
+Para multa `open`, a interface SHALL oferecer a ação de cobrar por cartão somente quando o backend informar que a operação está disponível. Após o envio, SHALL apresentar o estado retornado (`unknown`, `pending`, `confirmed`, `rejected`, `cancelled` ou equivalente), bloquear duplicidade e deixar claro que estados desconhecidos e pendentes não representam quitação.
 
 #### Scenario: Iniciar cobrança
 - **WHEN** o usuário autorizado confirma uma cobrança de cartão válida
@@ -20,6 +20,11 @@ Para multa `open`, a interface SHALL oferecer a ação de cobrar por cartão som
 - **WHEN** o backend informa recusa ou cancelamento
 - **THEN** a interface exibe erro compreensível e mantém a multa aberta
 - **AND** não oferece uma confirmação financeira falsa
+
+#### Scenario: Resultado desconhecido
+- **WHEN** o backend informa `unknown`
+- **THEN** a interface orienta o usuário a aguardar reconciliação administrativa
+- **AND** não oferece repetir a chamada externa nem apresenta link inexistente
 
 ### Requirement: Interface não manipula dados sensíveis de cartão
 

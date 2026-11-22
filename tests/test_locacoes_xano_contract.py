@@ -197,6 +197,10 @@ class TestRentalXanoContract(unittest.TestCase):
                 continue
             with self.subTest(path=path.name):
                 endpoint = body(path.read_text())
+                if path.name == "asaas_webhook_POST.xs":
+                    self.assertNotIn('auth = "user"', endpoint)
+                    self.assertIn('"asaas-access-token"', str(endpoint))
+                    continue
                 self.assertEqual(unique_assignment(endpoint, "auth"), '"user"')
                 stack = next(calls(endpoint, "stack"))[1]
                 self.assertEqual(stack[:2], ("function.run", '"Quick Start/enforce_role"'))

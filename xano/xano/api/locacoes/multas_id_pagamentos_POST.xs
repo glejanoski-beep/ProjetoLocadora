@@ -187,7 +187,7 @@ query "multas/{id}/pagamentos" verb=POST {
     db.get payment {
       field_name = "id"
       field_value = $payment.id
-      output = ["id", "fine_id", "customer_id", "amount_cents", "method", "paid_at", "registered_by", "status", "reversed_at", "reversed_by", "reversal_reason"]
+      output = ["id", "fine_id", "customer_id", "amount_cents", "method", "origin", "paid_at", "registered_by", "status", "reversed_at", "reversed_by", "reversal_reason"]
     } as $payment_result
     db.get fine {
       field_name = "id"

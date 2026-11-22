@@ -7,6 +7,9 @@ table payment {
     int customer_id { table = "customer" }
     int amount_cents
     enum method { values = ["cash", "pix", "debit_card", "credit_card"] }
+    enum? origin { values = ["manual", "asaas_checkout"] }
+    text? provider_checkout_id filters=trim|max:100
+    text? provider_payment_id filters=trim|max:100
     timestamp paid_at
     int registered_by { table = "user" }
     uuid operation_key
@@ -19,6 +22,7 @@ table payment {
   index = [
     {type: "primary", field: [{name: "id"}]}
     {type: "btree|unique", field: [{name: "registered_by"}, {name: "operation_key"}]}
+    {type: "btree|unique", field: [{name: "provider_checkout_id"}]}
     {type: "btree", field: [{name: "fine_id"}]}
     {type: "btree", field: [{name: "customer_id"}]}
   ]

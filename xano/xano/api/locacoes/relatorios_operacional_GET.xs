@@ -86,16 +86,26 @@ query "relatorios/operacional" verb=GET {
     db.query payment {
       where = $db.payment.paid_at >= $input.from && $db.payment.paid_at < $input.to && $db.payment.status == "confirmed"
       return = {type: "list"}
-      output = ["amount_cents", "method"]
+      output = ["amount_cents", "method", "origin"]
     } as $received
     var $received_cents { value = 0 }
     var $cash { value = 0 }
     var $pix { value = 0 }
     var $debit_card { value = 0 }
     var $credit_card { value = 0 }
+    var $manual_origin { value = 0 }
+    var $asaas_origin { value = 0 }
     foreach ($received) {
       each as $item {
         var.update $received_cents { value = $received_cents + $item.amount_cents }
+        conditional {
+          if ($item.origin == "asaas_checkout") {
+            var.update $asaas_origin { value = $asaas_origin + $item.amount_cents }
+          }
+          else {
+            var.update $manual_origin { value = $manual_origin + $item.amount_cents }
+          }
+        }
         conditional {
           if ($item.method == "cash") {
             var.update $cash { value = $cash + $item.amount_cents }
@@ -154,7 +164,7 @@ query "relatorios/operacional" verb=GET {
     generated_at: $now
     rentals: {checkouts: $checkouts, returns: ($returned|count), late_returns: $late_returns, active_now: $active_now, overdue_now: $overdue_now}
     fines: {generated_count: ($generated|count), generated_cents: $generated_cents, waived_count: ($waived|count), waived_cents: $waived_cents, open_balance_cents: $open_balance}
-    payments: {received_cents: $received_cents, received_count: ($received|count), by_method: {cash: $cash, pix: $pix, debit_card: $debit_card, credit_card: $credit_card}, reversed_count: ($reversed|count), reversed_cents: $reversed_cents}
+    payments: {received_cents: $received_cents, received_count: ($received|count), by_method: {cash: $cash, pix: $pix, debit_card: $debit_card, credit_card: $credit_card}, by_origin: {manual: $manual_origin, asaas_checkout: $asaas_origin}, reversed_count: ($reversed|count), reversed_cents: $reversed_cents}
     films: $films
   }
   tags = []

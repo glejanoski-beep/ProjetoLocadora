@@ -182,6 +182,16 @@ class RelatoriosState(_SessionBound, rx.State):
         return [{"label": METHOD_LABELS[m], "value": reais(by_method[m])} for m in METHODS]
 
     @rx.var
+    def origin_rows(self) -> list[dict[str, str]]:
+        if not self._report:
+            return []
+        by_origin = self._report["payments"]["by_origin"]
+        return [
+            {"label": "Pagamentos manuais", "value": reais(by_origin["manual"])},
+            {"label": "Asaas Checkout", "value": reais(by_origin["asaas_checkout"])},
+        ]
+
+    @rx.var
     def current_cards(self) -> list[dict[str, str]]:
         if not self._report:
             return []

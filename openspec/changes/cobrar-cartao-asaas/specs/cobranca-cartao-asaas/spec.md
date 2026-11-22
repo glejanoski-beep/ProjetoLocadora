@@ -37,10 +37,15 @@ O backend SHALL permitir iniciar uma cobrança de cartão somente para uma multa
 
 Cada tentativa SHALL possuir uma chave de operação única por conta e multa. Repetições com a mesma chave SHALL devolver a tentativa já criada ou seu resultado atual, sem criar cobrança duplicada no Asaas. Tentativas concorrentes incompatíveis SHALL preservar no máximo uma cobrança ativa para a mesma operação e SHALL recusar valores que excedam o saldo vigente.
 
-#### Scenario: Timeout após criação externa
-- **WHEN** o Asaas cria a cobrança, mas a resposta não chega ao backend
-- **THEN** a repetição com a mesma chave reconcilia a cobrança existente
-- **AND** não cria uma segunda cobrança
+#### Scenario: Timeout após chamada externa
+- **WHEN** a resposta do Asaas é ambígua ou não chega ao backend
+- **THEN** a tentativa local permanece `unknown` e a repetição com a mesma chave devolve essa tentativa sem enviar novo POST
+- **AND** nenhuma segunda cobrança é criada automaticamente
+
+#### Scenario: Reconciliação administrativa de tentativa desconhecida
+- **WHEN** um administrador consulta a lista protegida de tentativas desconhecidas, localiza o Checkout no painel Asaas e informa o ID, a referência externa correspondente, o valor conferido e uma justificativa
+- **THEN** o backend associa o Checkout à tentativa `unknown`, registra a auditoria e muda a tentativa para `pending`
+- **AND** a confirmação financeira continua dependendo de webhook autenticado do Asaas
 
 #### Scenario: Duas tentativas simultâneas
 - **WHEN** duas requisições tentam cobrar a mesma multa e operação ao mesmo tempo
@@ -49,12 +54,17 @@ Cada tentativa SHALL possuir uma chave de operação única por conta e multa. R
 
 ### Requirement: Estado externo não confirma pagamento prematuramente
 
-O sistema SHALL distinguir tentativa de cobrança, cobrança pendente, cobrança confirmada, cobrança recusada, cancelada e estornada. A multa e o pagamento interno SHALL ser atualizados como quitados somente após confirmação válida do Asaas. Uma cobrança pendente, recusada ou cancelada SHALL NOT criar pagamento confirmado nem reduzir o saldo.
+O sistema SHALL distinguir tentativa desconhecida (`unknown`), cobrança pendente, cobrança confirmada, cobrança recusada, cancelada e estornada. A multa e o pagamento interno SHALL ser atualizados como quitados somente após confirmação válida do Asaas. Uma cobrança desconhecida, pendente, recusada ou cancelada SHALL NOT criar pagamento confirmado nem reduzir o saldo.
 
 #### Scenario: Cartão pendente
 - **WHEN** o Asaas retorna cobrança criada ou aguardando confirmação
 - **THEN** a tentativa fica pendente
 - **AND** a multa continua com o saldo original
+
+#### Scenario: Resultado externo desconhecido
+- **WHEN** o backend não consegue determinar se o Asaas criou o Checkout
+- **THEN** registra `unknown` e informa que a tentativa precisa de reconciliação administrativa
+- **AND** não oferece nova cobrança para aquela tentativa nem reduz o saldo
 
 #### Scenario: Cartão confirmado
 - **WHEN** o backend confirma um status de pagamento válido do Asaas para a tentativa

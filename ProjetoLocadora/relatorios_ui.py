@@ -103,6 +103,8 @@ def _report() -> rx.Component:
             rx.box(
                 rx.el.h3("Recebido por meio de pagamento", class_name="vitrine-locacoes__review-title"),
                 rx.el.ul(rx.foreach(Reports.method_rows, _method_row), class_name="vitrine-relatorios__methods"),
+                rx.el.h3("Recebido por origem", class_name="vitrine-locacoes__review-title"),
+                rx.el.ul(rx.foreach(Reports.origin_rows, _method_row), class_name="vitrine-relatorios__methods"),
             ),
         ),
         rx.el.section(

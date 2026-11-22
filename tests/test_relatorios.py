@@ -24,7 +24,7 @@ REPORT = {
     "from": FROM, "to": TO, "generated_at": TO + 1000,
     "rentals": {"checkouts": 9, "returns": 4, "late_returns": 1, "active_now": 5, "overdue_now": 2},
     "fines": {"generated_count": 1, "generated_cents": 300, "waived_count": 0, "waived_cents": 0, "open_balance_cents": 0},
-    "payments": {"received_cents": 300, "received_count": 2, "by_method": {"cash": 300, "pix": 0, "debit_card": 0, "credit_card": 0}, "reversed_count": 0, "reversed_cents": 0},
+    "payments": {"received_cents": 300, "received_count": 2, "by_method": {"cash": 300, "pix": 0, "debit_card": 0, "credit_card": 0}, "by_origin": {"manual": 300, "asaas_checkout": 0}, "reversed_count": 0, "reversed_cents": 0},
     "films": [
         {"film_id": 1, "film_title": "Carros", "rentals": 3, "exemplars": 2},
         {"film_id": 2, "film_title": "Creed", "rentals": 5, "exemplars": 1},
@@ -73,6 +73,7 @@ class TestReportContract(unittest.TestCase):
             changed("rentals", overdue_now=6),
             changed("rentals", checkouts=-1),
             changed("payments", received_cents=301),
+            changed("payments", by_origin={"manual": 0, "asaas_checkout": 0}),
             changed("fines", generated_cents="300"),
             {**REPORT, "films": [REPORT["films"][0], REPORT["films"][0]]},
             {**REPORT, "films": [{**REPORT["films"][0], "rentals": 0}]},

@@ -26,7 +26,7 @@ query "pagamentos" verb=GET {
       where = ($customer_id == 0 || $db.payment.customer_id == $customer_id) && ($fine_id == 0 || $db.payment.fine_id == $fine_id)
       sort = {payment.id: "desc"}
       return = {type: "list", paging: {page: $input.page, per_page: $input.per_page, totals: true, metadata: true}}
-      output = ["items.id", "items.fine_id", "items.customer_id", "items.amount_cents", "items.method", "items.paid_at", "items.registered_by", "items.status", "items.reversed_at", "items.reversed_by", "items.reversal_reason", "curPage", "itemsTotal"]
+      output = ["items.id", "items.fine_id", "items.customer_id", "items.amount_cents", "items.method", "items.origin", "items.paid_at", "items.registered_by", "items.status", "items.reversed_at", "items.reversed_by", "items.reversal_reason", "curPage", "itemsTotal"]
     } as $payments
   }
   response = {items: $payments.items, page: $payments.curPage, per_page: $input.per_page, total: $payments.itemsTotal}

@@ -10,6 +10,9 @@
 			"tools": [
 				"*"
 			]
+		},
+		"asaas": {
+			"url": "https://docs.asaas.com/mcp"
 		}
 	}
 }

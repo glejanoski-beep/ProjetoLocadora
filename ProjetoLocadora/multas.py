@@ -46,6 +46,7 @@ class Payment(TypedDict):
     customer_id: int
     amount_cents: int
     method: str
+    origin: str
     paid_at: int
     registered_by: int
     status: str
@@ -161,16 +162,21 @@ def validar_fine(value: object) -> Fine:
 
 
 def validar_payment(value: object) -> Payment:
-    if type(value) is not dict or set(value) != PAYMENT_FIELDS:
+    if type(value) is not dict or set(value) not in (PAYMENT_FIELDS, PAYMENT_FIELDS - {"origin"}):
         raise ValueError("Resposta de pagamento inválida")
     for key in ("id", "fine_id", "customer_id", "amount_cents", "registered_by"):
         if not _positive(value[key]):
             raise ValueError("Resposta de pagamento inválida")
     if value["method"] not in PAYMENT_METHODS or not _date_ok(value["paid_at"]):
         raise ValueError("Resposta de pagamento inválida")
+    if "origin" not in value or value["origin"] is None:
+        value = {**value, "origin": "manual"}
+    if value["origin"] not in ("manual", "asaas_checkout"):
+        raise ValueError("Resposta de pagamento inválida")
     reversal = (value["reversed_at"], value["reversed_by"], value["reversal_reason"])
     if value["status"] == "reversed":
-        if not _date_ok(reversal[0]) or not _positive(reversal[1]) or not isinstance(reversal[2], str) or not reversal[2].strip():
+        actor_ok = _positive(reversal[1]) or (value["origin"] == "asaas_checkout" and reversal[1] is None)
+        if not _date_ok(reversal[0]) or not actor_ok or not isinstance(reversal[2], str) or not reversal[2].strip():
             raise ValueError("Resposta de pagamento inválida")
     elif value["status"] == "confirmed":
         if any(item is not None for item in reversal):

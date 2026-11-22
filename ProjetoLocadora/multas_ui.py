@@ -141,7 +141,7 @@ def _payment_item(row, is_admin) -> rx.Component:
         rx.box(
             rx.box(
                 rx.el.span(row["amount"], class_name="vitrine-multas__money"),
-                rx.el.span(row["method"] + " · " + row["paid_at"] + " · funcionário nº " + row["registered_by"], class_name="vitrine-locacoes__row-meta"),
+                rx.el.span(row["method"] + " · " + row["origin"] + " · " + row["paid_at"] + " · funcionário nº " + row["registered_by"], class_name="vitrine-locacoes__row-meta"),
                 rx.cond(row["reversal"] != "", rx.el.span(row["reversal"], class_name="vitrine-locacoes__row-meta")),
                 class_name="vitrine-locacoes__row-main",
             ),
@@ -228,7 +228,32 @@ def _pay_section() -> rx.Component:
                     ),
                 ),
             ),
-            rx.el.p("Somente registro: o sistema não processa cobrança em cartão ou Pix.", class_name="vitrine-locacoes__hint"),
+            rx.el.p("Pagamentos manuais continuam sendo apenas registros; o cartão é concluído no Checkout seguro do Asaas.", class_name="vitrine-locacoes__hint"),
+            rx.cond(
+                Fines.card_checkout_confirming,
+                rx.box(
+                    rx.el.p("O saldo integral será aberto em uma página segura do Asaas. Os dados do cartão não passam por esta aplicação. Continuar?", class_name="vitrine-clientes__panel-sub"),
+                    rx.box(
+                        rx.el.button("Continuar para Asaas", type="button", on_click=Fines.start_card_payment, disabled=Fines.loading, class_name="vitrine-clientes__primary"),
+                        rx.el.button("Cancelar", type="button", on_click=Fines.cancel_card_payment, disabled=Fines.loading, class_name="vitrine-clientes__secondary"),
+                        class_name="vitrine-locacoes__actions",
+                    ),
+                    class_name="vitrine-locacoes__return-box", role="region", aria_label="Confirmar cobrança por cartão",
+                ),
+                rx.el.button(
+                    rx.icon("credit-card", size=18, stroke_width=2, aria_hidden="true"),
+                    "Pagar saldo integral com cartão", type="button", on_click=Fines.ask_card_payment,
+                    disabled=~Fines.can_card_checkout, class_name="vitrine-clientes__secondary vitrine-locacoes__submit",
+                ),
+            ),
+            rx.cond(
+                Fines.card_checkout_status != "",
+                rx.box(
+                    rx.el.p("Cobrança via cartão: " + Fines.card_checkout_status + ". O saldo só muda após confirmação financeira.", class_name="vitrine-clientes__panel-sub"),
+                    rx.el.button("Consultar estado", type="button", on_click=Fines.refresh_card_payment, disabled=Fines.loading, class_name="vitrine-clientes__secondary"),
+                    class_name="vitrine-locacoes__return-box", role="status", aria_live="polite",
+                ),
+            ),
             class_name="vitrine-locacoes__return",
             aria_label="Registrar pagamento",
         ),
@@ -370,7 +395,7 @@ def _history_row(row) -> rx.Component:
                 rx.el.a(
                     rx.box(
                         rx.el.span(row["amount"], class_name="vitrine-multas__money"),
-                        rx.el.span(row["method"] + " · " + row["paid_at"] + " · multa " + row["fine_number"], class_name="vitrine-locacoes__row-meta"),
+                rx.el.span(row["method"] + " · " + row["origin"] + " · " + row["paid_at"] + " · multa " + row["fine_number"], class_name="vitrine-locacoes__row-meta"),
                         class_name="vitrine-locacoes__row-main",
                     ),
                     _status_chip(row["status"], rx.cond(row["reversed"] != "", "reversed", "paid")),

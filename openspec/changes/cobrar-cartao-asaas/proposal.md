@@ -6,10 +6,11 @@ O projeto atualmente registra `credit_card` apenas como um meio de pagamento int
 
 ## What Changes
 
-- Criar um fluxo de cobrança de cartão via Asaas para multas abertas, com criação idempotente da cobrança e referência externa persistida.
+- Criar um fluxo de cobrança de cartão via Asaas para multas abertas, reservando localmente cada operação idempotente antes da chamada externa.
 - Separar o estado da tentativa de cobrança do estado do pagamento confirmado, evitando marcar a multa como paga antes da confirmação do Asaas.
 - Processar confirmações, recusas, cancelamentos e estornos por webhook autenticado e idempotente.
-- Exibir no backoffice Reflex a ação de cobrar por cartão, o estado da cobrança, erros recuperáveis e a orientação para consultar uma tentativa em andamento.
+- Exibir no backoffice Reflex a ação de cobrar por cartão, o estado da cobrança, erros recuperáveis e a orientação para consultar uma tentativa em andamento ou aguardar reconciliação administrativa quando o resultado externo for desconhecido.
+- Permitir que administradores associem uma tentativa desconhecida a um Checkout encontrado no painel Asaas, com referência externa e justificativa auditadas; a confirmação financeira continuará dependendo do webhook autenticado.
 - Manter o registro manual de pagamentos existentes sem reprocessá-los no Asaas.
 - Restringir credenciais, chamadas ao Asaas, transições financeiras e auditoria ao backend Xano; nenhuma chave ou dado sensível de cartão será enviado ao frontend ou gravado em logs.
 - Adicionar testes de contrato, idempotência, concorrência, webhook duplicado, falha de rede e transições financeiras.

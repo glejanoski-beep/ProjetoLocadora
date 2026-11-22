@@ -85,13 +85,14 @@ def validar_relatorio(value: object, from_ms: int, to_ms: int) -> dict:
     rentals = _block(value["rentals"], {"checkouts", "returns", "late_returns", "active_now", "overdue_now"})
     fines = _block(value["fines"], {"generated_count", "generated_cents", "waived_count", "waived_cents", "open_balance_cents"})
     payments = value["payments"]
-    if type(payments) is not dict or set(payments) != {"received_cents", "received_count", "by_method", "reversed_count", "reversed_cents"}:
+    if type(payments) is not dict or set(payments) != {"received_cents", "received_count", "by_method", "by_origin", "reversed_count", "reversed_cents"}:
         raise ValueError("Relatório inválido")
-    _block({k: v for k, v in payments.items() if k != "by_method"}, {"received_cents", "received_count", "reversed_count", "reversed_cents"})
+    _block({k: v for k, v in payments.items() if k not in ("by_method", "by_origin")}, {"received_cents", "received_count", "reversed_count", "reversed_cents"})
     by_method = _block(payments["by_method"], set(METHODS))
+    by_origin = _block(payments["by_origin"], {"manual", "asaas_checkout"})
     if rentals["late_returns"] > rentals["returns"] or rentals["overdue_now"] > rentals["active_now"]:
         raise ValueError("Relatório inválido")
-    if sum(by_method.values()) != payments["received_cents"]:
+    if sum(by_method.values()) != payments["received_cents"] or sum(by_origin.values()) != payments["received_cents"]:
         raise ValueError("Relatório inválido")
     films = value["films"]
     if type(films) is not list:

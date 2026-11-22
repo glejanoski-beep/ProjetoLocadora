@@ -17,7 +17,7 @@ from ProjetoLocadora.ProjetoLocadora import State
 from ProjetoLocadora.multas import (
     centavos, estimar_multa, reais, saldo, validar_fine, validar_payment, validar_policy,
 )
-from ProjetoLocadora.multas_state import ClienteHistoricoState, MultasState
+from ProjetoLocadora.multas_state import CHECKOUT_STATUS, ClienteHistoricoState, MultasState, payment_row
 from tests.test_locacoes_client import RETURNED
 from tests.test_locacoes_devolucao import POLICY, fine_for
 from tests.test_locacoes_xano_contract import ROOT, body, calls, flatten, predicate_exists, unique_assignment
@@ -28,7 +28,7 @@ DUE = RETURNED["due_at"]
 FINE = fine_for({**RETURNED, "returned_at": DUE + 49 * HOUR})  # 3 dias, 900 centavos
 PAYMENT = {
     "id": 11, "fine_id": FINE["id"], "customer_id": FINE["customer_id"], "amount_cents": 300,
-    "method": "pix", "paid_at": FINE["returned_at"] + HOUR, "registered_by": 9, "status": "confirmed",
+    "method": "pix", "origin": "manual", "paid_at": FINE["returned_at"] + HOUR, "registered_by": 9, "status": "confirmed",
     "reversed_at": None, "reversed_by": None, "reversal_reason": None,
 }
 ME = {"id": 9, "role": "member", "is_active": True}
@@ -100,10 +100,28 @@ class TestFineContract(unittest.TestCase):
         self.assertEqual(validar_payment(PAYMENT), PAYMENT)
         reversed_ = {**PAYMENT, "status": "reversed", "reversed_at": PAYMENT["paid_at"] + 1, "reversed_by": 1, "reversal_reason": "Erro de digitação"}
         self.assertEqual(validar_payment(reversed_)["status"], "reversed")
+        external_reversed = {**reversed_, "origin": "asaas_checkout", "reversed_by": None, "reversal_reason": "Estorno confirmado pelo Asaas"}
+        self.assertIsNone(validar_payment(external_reversed)["reversed_by"])
         for bad in ({**PAYMENT, "method": "boleto"}, {**PAYMENT, "amount_cents": 0}, {**PAYMENT, "status": "reversed"},
                     {**PAYMENT, "reversed_by": 1}, {**PAYMENT, "operation_key": KEY}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 validar_payment(bad)
+
+    def test_payment_origin_defaults_legacy_rows_to_manual(self):
+        legacy = {key: value for key, value in PAYMENT.items() if key != "origin"}
+        self.assertEqual(validar_payment(legacy)["origin"], "manual")
+        self.assertEqual(payment_row(PAYMENT)["origin"], "Manual")
+        self.assertEqual(payment_row({**PAYMENT, "origin": "asaas_checkout"})["origin"], "Asaas Checkout")
+
+    def test_all_checkout_states_have_a_safe_ui_label(self):
+        self.assertEqual(set(CHECKOUT_STATUS), set(client.CHECKOUT_STATUSES))
+        self.assertEqual(CHECKOUT_STATUS["unknown"], "Resultado da cobrança desconhecido; aguarda reconciliação administrativa")
+        self.assertEqual(CHECKOUT_STATUS["pending"], "Aguardando confirmação")
+        self.assertEqual(CHECKOUT_STATUS["confirmed"], "Confirmado pelo Asaas")
+        self.assertEqual(CHECKOUT_STATUS["rejected"], "Recusado pelo Asaas")
+        self.assertEqual(CHECKOUT_STATUS["cancelled"], "Cancelado")
+        self.assertEqual(CHECKOUT_STATUS["expired"], "Expirado")
+        self.assertEqual(CHECKOUT_STATUS["reversed"], "Estorno confirmado pelo Asaas")
 
 
 class TestFineTransport(unittest.IsolatedAsyncioTestCase):
@@ -134,6 +152,41 @@ class TestFineTransport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(self.requests[0].url.path, "/api:rentals/multas/7/pagamentos")
         self.assertEqual(json.loads(self.requests[0].content), {"amount_cents": 300, "method": "pix", "operation_key": KEY})
+
+    async def test_card_checkout_creation_validates_safe_checkout_contract(self):
+        checkout = {
+            "id": 8, "fine_id": 7, "customer_id": 3, "requested_by": 9, "operation_key": KEY, "external_reference": "locadora-fine-7-" + KEY,
+            "checkout_id": "chk_123", "checkout_url": "https://asaas.com/checkoutSession/show?id=chk_123",
+            "amount_cents": 900, "status": "pending", "last_event_id": None, "external_payment_id": None,
+            "created_at": FINE["returned_at"], "updated_at": FINE["returned_at"], "confirmed_at": None, "reversed_at": None,
+        }
+        result = await self.call(lambda: client.start_card_checkout("tok", 7, KEY), httpx.Response(200, json={"checkout": checkout}))
+        self.assertEqual(result, checkout)
+        self.assertEqual(self.requests[0].url.path, "/api:rentals/multas/7/cobranca-cartao")
+        self.assertEqual(json.loads(self.requests[0].content), {"operation_key": KEY})
+        self.assertNotIn("ASAAS_API_KEY", str(result))
+
+    async def test_checkout_can_be_recovered_without_browser_operation_key(self):
+        checkout = {
+            "id": 8, "fine_id": 7, "customer_id": 3, "requested_by": 9, "operation_key": KEY, "external_reference": "locadora-fine-7-" + KEY,
+            "checkout_id": "chk_123", "checkout_url": "https://asaas.com/checkoutSession/show?id=chk_123",
+            "amount_cents": 900, "status": "rejected", "last_event_id": "evt_2", "external_payment_id": None,
+            "created_at": FINE["returned_at"], "updated_at": FINE["returned_at"], "confirmed_at": None, "reversed_at": None,
+        }
+        result = await self.call(lambda: client.get_card_checkout("tok", 7), httpx.Response(200, json={"checkout": checkout}))
+        self.assertEqual(result, checkout)
+        self.assertEqual(self.requests[0].url.path, "/api:rentals/multas/7/cobranca-cartao")
+        self.assertEqual(self.requests[0].url.query, b"")
+
+    async def test_unknown_checkout_is_valid_without_external_id_or_url(self):
+        checkout = {
+            "id": 8, "fine_id": 7, "customer_id": 3, "requested_by": 9, "operation_key": KEY, "external_reference": "locadora-fine-7-" + KEY,
+            "checkout_id": None, "checkout_url": None, "amount_cents": 900, "status": "unknown", "last_event_id": None, "external_payment_id": None,
+            "created_at": FINE["returned_at"], "updated_at": FINE["returned_at"], "confirmed_at": None, "reversed_at": None,
+        }
+        result = await self.call(lambda: client.get_card_checkout("tok", 7, KEY), httpx.Response(200, json={"checkout": checkout}))
+        self.assertEqual(result, checkout)
+        self.assertIsNone(result["checkout_url"])
 
     async def test_pay_input_and_gate_send_nothing(self):
         for args in ((0, 300, "pix", KEY), (7, 0, "pix", KEY), (7, 300, "boleto", KEY), (7, 300, "pix", "x"), (7, 3.0, "pix", KEY)):
@@ -210,6 +263,7 @@ class TestFineState(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.env.stop)
         self.me = patch("ProjetoLocadora.multas_state.get_me_xano", new=AsyncMock(return_value=ME)).start()
         self.get = patch("ProjetoLocadora.multas_state.get_fine", new=AsyncMock(return_value=(FINE, []))).start()
+        self.checkout = patch("ProjetoLocadora.multas_state.get_card_checkout", new=AsyncMock(side_effect=client.FineError("notfound"))).start()
         self.pay = patch("ProjetoLocadora.multas_state.pay_fine", new=AsyncMock()).start()
         self.addCleanup(patch.stopall)
 
@@ -265,6 +319,36 @@ class TestFineState(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pay.await_args.args[4], key)
         self.assertFalse(self.state.pay_pending)
         self.assertIn("Multa quitada.", self.state.notice)
+
+    async def test_unknown_card_checkout_reuses_the_operation_key(self):
+        await self.open()
+        self.state.card_checkout_confirming = True
+        start = patch(
+            "ProjetoLocadora.multas_state.start_card_checkout",
+            new=AsyncMock(side_effect=[client.FineError("unknown"), client.FineError("unknown")]),
+        ).start()
+        await consume(self.state.start_card_payment())
+        first_key = start.await_args_list[0].args[2]
+        self.assertEqual(self.state._card_operation_key, first_key)
+        self.state.card_checkout_confirming = True
+        await consume(self.state.start_card_payment())
+        self.assertEqual(start.await_args_list[1].args[2], first_key)
+
+    async def test_unknown_checkout_does_not_redirect_or_allow_another_charge(self):
+        await self.open()
+        checkout = {
+            "id": 8, "fine_id": 7, "customer_id": 3, "requested_by": 9, "operation_key": KEY,
+            "external_reference": "locadora-fine-7-" + KEY, "checkout_id": None, "checkout_url": None,
+            "amount_cents": 900, "status": "unknown", "last_event_id": None, "external_payment_id": None,
+            "created_at": FINE["returned_at"], "updated_at": FINE["returned_at"], "confirmed_at": None, "reversed_at": None,
+        }
+        with patch("ProjetoLocadora.multas_state.start_card_checkout", new=AsyncMock(return_value=checkout)):
+            self.state.card_checkout_confirming = True
+            events = [event async for event in self.state.start_card_payment()]
+        self.assertEqual(events, [None])
+        self.assertEqual(self.state._card_checkout["status"], "unknown")
+        self.assertFalse(self.state.can_card_checkout)
+        self.assertIn("reconciliação administrativa", self.state.notice)
 
     async def test_conflict_shows_backend_message_and_reloads(self):
         await self.open()

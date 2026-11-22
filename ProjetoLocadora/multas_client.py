@@ -32,6 +32,7 @@ BUSINESS_CONFLICTS = frozenset({
 })
 NOT_FOUND = frozenset({"Multa não encontrada.", "Pagamento não encontrado."})
 FINE_STATUSES = ("", "open", "paid", "waived")
+CHECKOUT_STATUSES = ("unknown", "pending", "confirmed", "rejected", "cancelled", "expired", "reversed")
 
 
 class FineError(Exception):
@@ -118,6 +119,23 @@ def _key(value: str) -> str:
         raise FineError("input") from None
 
 
+def _checkout(value: object, fine_id: int, operation_key: str | None = None) -> dict:
+    if type(value) is not dict or set(value) != {"id", "fine_id", "customer_id", "requested_by", "operation_key", "external_reference", "checkout_id", "checkout_url", "amount_cents", "status", "last_event_id", "external_payment_id", "created_at", "updated_at", "confirmed_at", "reversed_at"}:
+        raise ValueError
+    if type(value["id"]) is not int or value["id"] < 1 or value["fine_id"] != fine_id or (operation_key is not None and value["operation_key"] != operation_key):
+        raise ValueError
+    if type(value["amount_cents"]) is not int or value["amount_cents"] < 1:
+        raise ValueError
+    if value["status"] not in CHECKOUT_STATUSES:
+        raise ValueError
+    if value["status"] == "unknown":
+        if value["checkout_id"] is not None or value["checkout_url"] is not None:
+            raise ValueError
+    elif not isinstance(value["checkout_id"], str) or not isinstance(value["checkout_url"], str) or not value["checkout_url"].startswith("https://"):
+        raise ValueError
+    return value.copy()
+
+
 def _reason(value: str) -> str:
     clean = value.strip() if isinstance(value, str) else ""
     if not clean or len(clean) > 500:
@@ -179,6 +197,30 @@ async def get_fine(token: str, fine_id: int) -> tuple[Fine, list[Payment]]:
     data = await _request(token, "GET", f"multas/{_id(fine_id)}")
     try:
         return _detail(data, fine_id)
+    except (ValueError, TypeError, KeyError):
+        raise FineError("invalid") from None
+
+
+async def start_card_checkout(token: str, fine_id: int, operation_key: str) -> dict:
+    """Inicia Checkout hospedado; não coleta cartão nem considera a multa quitada."""
+    fine_id = _id(fine_id)
+    key = _key(operation_key)
+    data = await _request(token, "POST", f"multas/{fine_id}/cobranca-cartao", payload={"operation_key": key})
+    try:
+        return _checkout(data["checkout"], fine_id, key)
+    except (ValueError, TypeError, KeyError):
+        raise FineError("unknown") from None
+
+
+async def get_card_checkout(token: str, fine_id: int, operation_key: str | None = None) -> dict:
+    fine_id = _id(fine_id)
+    key = _key(operation_key) if operation_key else None
+    params = {"operation_key": key} if key else None
+    data = await _request(token, "GET", f"multas/{fine_id}/cobranca-cartao", params=params, gated=False)
+    if type(data) is dict and data.get("checkout") is None:
+        raise FineError("notfound")
+    try:
+        return _checkout(data["checkout"], fine_id, key)
     except (ValueError, TypeError, KeyError):
         raise FineError("invalid") from None
 
