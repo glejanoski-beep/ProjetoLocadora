@@ -145,6 +145,7 @@ class State(rx.State):
     login_submitting: bool = False
     error_message: str = ""
     password_visible: bool = False
+    theme_mode: str = rx.LocalStorage("dark", name="cinebyte-theme")
     reset_dialog_open: bool = False
     reset_loading: bool = False
     _login_email: str = ""
@@ -408,6 +409,24 @@ class State(rx.State):
     @rx.var
     def password_toggle_label(self) -> str:
         return "Ocultar senha" if self.password_visible else "Mostrar senha"
+
+    @rx.var
+    def theme_toggle_label(self) -> str:
+        mode = self.theme_mode if self.theme_mode in ("dark", "light") else "dark"
+        return "Ativar modo claro" if mode == "dark" else "Ativar modo escuro"
+
+    @rx.event
+    def normalize_theme(self) -> None:
+        if self.theme_mode not in ("dark", "light"):
+            self.theme_mode = "dark"
+
+    @rx.event
+    def toggle_theme(self):
+        current = self.theme_mode if self.theme_mode in ("dark", "light") else "dark"
+        self.theme_mode = "light" if current == "dark" else "dark"
+        return rx.call_script(
+            f"document.documentElement.setAttribute('data-theme', '{self.theme_mode}')"
+        )
 
     def capture_login_email(self, value: str) -> None:
         self._login_email = value
@@ -1820,15 +1839,27 @@ def login_panel() -> rx.Component:
 
 @rx.page(route="/login", on_load=State.restore_session)
 def login_page() -> rx.Component:
-    return rx.el.main(
-        login_backdrop(),
-        login_topbar(),
-        login_panel(),
-        rx.text(
-            "Acesso restrito a funcionários da CINEBYTE LOCADORA",
-            class_name="vitrine-login__legal",
+    return rx.fragment(
+        rx.script(
+            """
+            (() => {
+              const saved = localStorage.getItem("cinebyte-theme");
+              const mode = saved === "light" || saved === "dark" ? saved : "dark";
+              if (saved !== "light" && saved !== "dark") localStorage.setItem("cinebyte-theme", "dark");
+              document.documentElement.setAttribute("data-theme", mode);
+            })();
+            """
         ),
-        class_name="vitrine-login",
+        rx.el.main(
+            login_backdrop(),
+            login_topbar(),
+            login_panel(),
+            rx.text(
+                "Acesso restrito a funcionários da CINEBYTE LOCADORA",
+                class_name="vitrine-login__legal",
+            ),
+            class_name="vitrine-login",
+        ),
     )
 
 
@@ -1880,6 +1911,16 @@ def dashboard_topbar(active: str = "/backoffice") -> rx.Component:
     """Barra superior: marca CINEBYTE, navegação e identificação do usuário."""
 
     return rx.el.header(
+        rx.script(
+            """
+            (() => {
+              const saved = localStorage.getItem("cinebyte-theme");
+              const mode = saved === "light" || saved === "dark" ? saved : "dark";
+              if (saved !== "light" && saved !== "dark") localStorage.setItem("cinebyte-theme", "dark");
+              document.documentElement.setAttribute("data-theme", mode);
+            })();
+            """
+        ),
         rx.box(
             rx.box(
                 rx.icon("play", size=18, stroke_width=0, fill="currentColor"),
@@ -1896,30 +1937,45 @@ def dashboard_topbar(active: str = "/backoffice") -> rx.Component:
         ),
         dashboard_nav(active),
         rx.box(
-            rx.box(
-                rx.el.span(
-                    rx.cond(State.user_name != "", State.user_name, "Funcionário"),
-                    class_name="vitrine-dash__user-name",
-                ),
-                rx.el.span(
-                    State.user_role_label,
-                    class_name="vitrine-dash__user-role",
-                ),
-                class_name="vitrine-dash__user-text",
-            ),
-            rx.box(
-                rx.cond(
-                    State.user_initials != "",
-                    State.user_initials,
-                    rx.icon("user", size=16, aria_hidden="true"),
-                ),
-                class_name="vitrine-dash__avatar",
-                aria_hidden="true",
-            ),
             rx.button(
                 "Sair",
                 on_click=State.logout,
                 class_name="vitrine-dash__logout",
+            ),
+            rx.button(
+                rx.cond(
+                    State.theme_mode == "dark",
+                    rx.icon("sun", size=16, aria_hidden="true"),
+                    rx.icon("moon", size=16, aria_hidden="true"),
+                ),
+                type="button",
+                on_click=State.toggle_theme,
+                aria_label=State.theme_toggle_label,
+                title=State.theme_toggle_label,
+                class_name="vitrine-dash__theme-toggle",
+            ),
+            rx.box(
+                rx.box(
+                    rx.el.span(
+                        rx.cond(State.user_name != "", State.user_name, "Funcionário"),
+                        class_name="vitrine-dash__user-name",
+                    ),
+                    rx.el.span(
+                        State.user_role_label,
+                        class_name="vitrine-dash__user-role",
+                    ),
+                    class_name="vitrine-dash__user-text",
+                ),
+                rx.box(
+                    rx.cond(
+                        State.user_initials != "",
+                        State.user_initials,
+                        rx.icon("user", size=16, aria_hidden="true"),
+                    ),
+                    class_name="vitrine-dash__avatar",
+                    aria_hidden="true",
+                ),
+                class_name="vitrine-dash__user-profile",
             ),
             class_name="vitrine-dash__user",
         ),
@@ -3837,8 +3893,21 @@ def reset_password_page() -> rx.Component:
 
 
 app = rx.App(
+    head_components=[
+        rx.script(
+            """
+            (() => {
+              const saved = localStorage.getItem("cinebyte-theme");
+              const mode = saved === "light" || saved === "dark" ? saved : "dark";
+              if (saved !== "light" && saved !== "dark") localStorage.setItem("cinebyte-theme", "dark");
+              document.documentElement.setAttribute("data-theme", mode);
+            })();
+            """
+        )
+    ],
     stylesheets=[
         "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap",
+        "/theme.css",
         "/login.css",
         "/dashboard.css",
         "/acervo.css",
